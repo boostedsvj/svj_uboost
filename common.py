@@ -306,7 +306,7 @@ def columns_to_numpy(
     for cols in bkg_cols:
         mtwind = mt_wind(cols, mt_high, mt_low)
         this_X = cols.to_numpy(features)[mtwind]
-        this_weight = cols.arrays['puweight'][mtwind]
+        this_weight = cols.arrays['puweight'][mtwind]*cols.arrays['weight'][mtwind]
         if downsample < 1.:
             select = np.random.choice(len(this_weight), int(downsample*len(this_weight)), replace=False)
             this_X = this_X[select]
