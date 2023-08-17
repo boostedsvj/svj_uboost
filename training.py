@@ -150,6 +150,8 @@ def main():
     # adding signal models
     parser.add_argument('--mdark', type=str, default='10.')
     parser.add_argument('--rinv', type=str, default='0.3')
+    # adding mtwindow
+    parser.add_argument('--mtwind', action='store_true', help='apply iterative +/- 100 GeV cut from mz')
     args, leftover_args = parser.parse_known_args()
 
     global training_features
@@ -258,6 +260,7 @@ def main():
         hyperpar_parser.add_argument('--maxdepth', dest='max_depth', type=int)
         hyperpar_parser.add_argument('--subsample', type=float)
         hyperpar_parser.add_argument('--nest', dest='n_estimators', type=int)
+        
         hyperpar_args = hyperpar_parser.parse_args(leftover_args)
 
         parameters = dict( # Base parameters
@@ -304,6 +307,7 @@ def main():
             print_weight_table(bkg_cols, signal_cols, 'weight')
             X, y, weight = columns_to_numpy(
                 signal_cols, bkg_cols, training_features,
+                mtwind,
                 downsample=args.downsample
                 )
             outfile = strftime('models/svjbdt_%b%d_allsignals_qcdttjets.json')

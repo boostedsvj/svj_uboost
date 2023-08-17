@@ -210,6 +210,7 @@ class Columns(svj_ntuple_processing.Columns):
     def presel_eff(self):
         if self.cutflow['raw']==0: return 0.
         return self.cutflow['preselection'] / self.cutflow['raw']
+       
 
     @property
     def xs(self):
@@ -288,7 +289,8 @@ def columns_persignal_to_numpy(
 
 
 def columns_to_numpy(
-    signal_cols, bkg_cols, features,mtwind_app,mz,
+    signal_cols, bkg_cols, features,
+    mtwind_app, # to define the mT window, for iterative training set mtwind_app==True
     downsample=.4
     ):
     """
@@ -301,12 +303,13 @@ def columns_to_numpy(
     signal_weight = []
 
     logger.info(f'Downsampling bkg, keeping fraction of {downsample}')
+    if mtwind_app==True: mz=signal_cols.metadata['mz']
     mt_low, mt_high = mt_range(mtwind_app,mz)
     # Get the features for the bkg samples
     for cols in bkg_cols:
-        mtwind = mt_wind(cols, mt_high, mt_low)
-        this_X = cols.to_numpy(features)[mtwind]
-        this_weight = cols.arrays['puweight'][mtwind]*cols.arrays['weight'][mtwind]
+        bkg_mtwind = mt_wind(cols, mt_high, mt_low)
+        this_X = cols.to_numpy(features)[bkg_mtwind]
+        this_weight = cols.arrays['puweight'][mtwind]*cols.arrays['weight'][bkg_mtwind]
         if downsample < 1.:
             select = np.random.choice(len(this_weight), int(downsample*len(this_weight)), replace=False)
             this_X = this_X[select]
@@ -317,9 +320,9 @@ def columns_to_numpy(
 
     # Get the features for the signal samples
     for cols in signal_cols:
-        sigmtwind = mt_wind(cols, mt_high, mt_low)
-        X.append(cols.to_numpy(features)[sigmtwind])
-        len_sig_cols=len(cols.arrays[features[0]][sigmtwind])
+        sig_mtwind = mt_wind(cols, mt_high, mt_low)
+        X.append(cols.to_numpy(features)[sig_mtwind])
+        len_sig_cols=len(cols.arrays[features[0]][sig_mtwind])
         y.append(np.ones(len_sig_cols))
         signal_weight.append((1./len_sig_cols)*np.ones(len_sig_cols))
     
@@ -343,7 +346,8 @@ def bkg_weightmt_to_numpy(
     mt_low, mt_high = mt_range(mtwind_app, mz)
     for cols in bkg_cols:
         mtwind=mt_wind(cols, mt_high, mt_low)
-        bkg_weight.append(cols.xs * cols.presel_eff / len(cols) * lumi * cols.arrays['puweight'][mtwind])
+        #bkg_weight.append(cols.xs * cols.presel_eff / len(cols) * lumi * cols.arrays['puweight'][mtwind])
+        bkg_weight.append(cols.xs / len(cols) * lumi * cols.arrays['puweight'][mtwind])
         bkg_mt.append(cols.arrays['mt'][mtwind])
 
     bkg_weight = np.concatenate(bkg_weight)
@@ -359,7 +363,8 @@ def sig_weightmt_to_numpy(
     mt_low, mt_high = mt_range(mtwind_app,mz)
     mtwind=mt_wind(cols, mt_high, mt_low)
     s = cols.metadata['mz']
-    sig_weight = gq**2 * cols.xs * cols.presel_eff / len(cols) * lumi * cols.arrays['puweight'][mtwind]
+    #sig_weight = gq**2 * cols.xs * cols.presel_eff / len(cols) * lumi * cols.arrays['puweight'][mtwind]
+    sig_weight = cols.xs / len(cols) * lumi * cols.arrays['puweight'][mtwind]
     sig_mt = cols.arrays['mt'][mtwind]
     y = np.ones(len(sig_mt))
     return sig_weight, sig_mt, y
