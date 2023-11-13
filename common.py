@@ -330,9 +330,12 @@ class Columns(svj_ntuple_processing.Columns):
         inst.cutflow = OrderedDict()
         for key in old_cf.keys():
             if isinstance(key, bytes):
-                inst.cutflow[key.decode()] = old_cf[key]
+                new_key = key.decode()
             else:
-                inst.cutflow[key] = old_cf[key]
+                new_key = key
+            if new_key=="ordered_preselection" or new_key=="selection_cuts":
+                new_key = "preselection"
+            inst.cutflow[new_key] = old_cf[key]
         return inst
 
     def __repr__(self):
