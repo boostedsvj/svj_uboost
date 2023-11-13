@@ -20,6 +20,10 @@ def format_val(s, ndec=2):
     except ValueError:
         return str(s)
 
+def format_val_latex(s, ndec=2):
+    val = format_val(s, ndec)
+    if not "&" in val: val = r'\twocolc{'+val+'}'
+    return val
 
 def transpose_table(table):
     """
@@ -29,12 +33,12 @@ def transpose_table(table):
     return [list(x) for x in zip(*table)]
 
 
-def format_table(table, col_sep=' ', row_sep='\n', transpose=False):
-    table = [ [format_val(c) for c in row ] for row in table ]
+def format_table(table, col_sep=' & ', row_sep='\n', transpose=False):
+    table = [ [format_val_latex(c) for c in row ] for row in table ]
     if transpose: table = transpose_table(table)
     col_widths = [ max(map(len, column)) for column in zip(*table) ]
     return row_sep.join(
-        col_sep.join(f'{col:{w}s}' for col, w in zip(row, col_widths)) for row in table
+        col_sep.join(f'{col:{w}s}' for col, w in zip(row, col_widths))+r' \\' for row in table
         )
 
 
@@ -69,7 +73,7 @@ def combined_column(cols):
     sumxs = lambda x: sum(v*c.xs/total_xs for v, c in zip(x, cols))
     combined.cutflow = OrderedDict()
     for k in cols[0].cutflow.keys():
-        combined.cutflow[k] = sumxs(c.cutflow[k]/c.cutflow['raw'] for c in cols)
+        combined.cutflow[k] = sumxs(c.cutflow[k] for c in cols)
     return combined
 
 
@@ -77,18 +81,42 @@ def make_column(c):
     s = [column_name(c)]
     s.append(f'{c.xs:.2e}')
     raw = c.cutflow['raw']
-    for val in c.cutflow.values():
-        s.append(f'{100*val/raw:.2f}%')
-    #for i in range(1,len(c.cutflow)):   
-        #s.append(100*c.cutflow.values()[i]/c.cutflow.values[i-1])
+    prev_val = None
+    for i,val in enumerate(c.cutflow.values()):
+        ival = int(val)
+        tmp = f'{ival:d}'
+        tmp2 = ""
+        if i>0:
+            tmp2 = "{:.0f}".format(100*val/prev_val)
+        s.append(tmp+" & "+tmp2)
+        prev_val = val
 
-    n137 = c.xs * c.presel_eff * 137.2*1e3
-    s.append(f'{n137:.2e}')
+    n137 = c.presel_eff*100
+    s.append(f'{n137:.3f}')
     return s
 
 
 def header_column(c):
-    return ['', 'xs'] + list(c.cutflow.keys()) + ['n137']
+    row_names = ['Selection', 'xs'] + list(c.cutflow.keys()) + ['n137']
+    nice_names = {
+        'xs': 'cross section [pb]',
+        'raw': '',
+        'n_ak15jets>=2': r'$\njet\geq2$',
+        'ak15jets_id': 'Jet ID',
+        'subl_eta<2.4': r'$\abs{\eta(\widejet_2})<2.4$',
+        'ak8jet.pt>500': r'$\pt(\trigjet_1) > 500\GeV$',
+        'subl_ecf>0': r'$\pt(\widejet_2^{\text{SD}}) > 0.1\GeV$',
+        'rtx>1.1': r'$\RTx>1.1$',
+        'muonpt<1500': r'$\pt(\Pgm)<1500\GeV$',
+        'nleptons=0': r'$N_{\Pe,\Pgm}=0$',
+        'metfilter': 'MET filters',
+        'n_ak4jets>=2': r'$\nnarrow\geq2$',
+        'ecaldeadcells': 'Custom MET filter',
+        'abs(metdphi)<1.5': r'$\Delta\phi(\MET,\widejet_2)<1.5$',
+        '180<mt<650': r'$180<\MTx<650\GeV$',
+        'n137': r'Efficiency [\%]',
+    }
+    return [nice_names[row_name] if row_name in nice_names else row_name for row_name in row_names]
 
 
 def make_table(cols, combined=True):
@@ -96,11 +124,11 @@ def make_table(cols, combined=True):
     if combined: table.append(make_column(combined_column(cols)))
     return transpose_table(table)
 
-def collect_columns(base_dir):
-    signal_cols = [Columns.load(f) for f in glob.glob(base_dir+'/signal_notruth/*mdark10_rinv0.3.npz')]
+def collect_columns(base_dir, sig_dir, bkg_dir, sig_file):
+    signal_cols = [Columns.load(f) for f in glob.glob(base_dir+'/'+sig_dir+'/'+sig_file)]
     signal_cols.sort(key=lambda s: (s.metadata['mz'], s.metadata['rinv']))
 
-    bkg_cols = [Columns.load(f) for f in glob.glob(base_dir+'/bkg/Summer20UL18/*.npz')]
+    bkg_cols = [Columns.load(f) for f in glob.glob(base_dir+'/'+bkg_dir+'/*.npz')]
     bkg_cols = filter_pt(bkg_cols, 170.)
     bkg_cols = [c for c in bkg_cols if not(c.metadata['bkg_type']=='wjets' and 'htbin' not in c.metadata)]
 
@@ -117,8 +145,8 @@ def collect_columns(base_dir):
     return signal_cols, bkg_cols, bkg_cols_per_type
 
 
-def print_cutflow_tables(base_dir):
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
+def print_cutflow_tables(base_dir, sig_dir, bkg_dir, sig_file):
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir, sig_dir, bkg_dir, sig_file)
 
     for bkg_type, cols in bkg_cols_per_type.items():
         print('-'*80)
@@ -129,29 +157,40 @@ def print_cutflow_tables(base_dir):
     print('bkg_summary')
 
     combined_bkg_cols = []
+    bkg_names = {
+        'qcd': 'QCD',
+        'ttjets': r'\ttbar',
+        'wjets': r'\wjets',
+        'zjets': r'\zjets',
+    }
     for bkg_type, cols in bkg_cols_per_type.items():
         combined_bkg_cols.append(combined_column(cols))
-        combined_bkg_cols[-1].metadata['colname'] = bkg_type
+        combined_bkg_cols[-1].metadata['colname'] = bkg_names[bkg_type]
     print(format_table(make_table(combined_bkg_cols)))
 
     print('-'*80)
     print('signal')
     print(format_table(make_table(signal_cols, combined=False)))
 
+    print('-'*80)
+    print('AN table')
+    an_cols = combined_bkg_cols+[next(sig_col for sig_col in signal_cols if sig_col.metadata['mz']==350)]
+    an_cols[-1].metadata['colname'] = 'Signal'
+    print(format_table(make_table(an_cols, combined=False)))
 
-def print_cutflow_tables_rinv0p3_only(base_dir):
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
+def print_cutflow_tables_rinv0p3_only(base_dir, sig_dir, bkg_dir, sig_file):
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir, sig_dir, bkg_dir, sig_file)
     signal_cols = [s for s in signal_cols if s.metadata['rinv']==0.3]
     print('-'*80)
     print('signal')
     print(format_table(make_table(signal_cols, combined=False)))
 
 
-def n137_plots(base_dir):
+def n137_plots(base_dir, sig_dir, bkg_dir, sig_file):
     import matplotlib.pyplot as plt
     set_matplotlib_fontsizes()
 
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir, sig_dir, bkg_dir, sig_file)
 
     # group signals by rinv
     rinvs = list(sorted(set(s.metadata['rinv'] for s in signal_cols)))
@@ -182,7 +221,10 @@ def n137_plots(base_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--dir", type=str, default="/home/snabili/hadoop/HADD_puweight", help="base directory for sig and bkg skims")
+    parser.add_argument("--sig-dir", type=str, default="signal_notruth", help="subdirectory for sig skims")
+    parser.add_argument("--bkg-dir", type=str, default="bkg/Summer20UL18", help="subdirectory for bkg skims")
+    parser.add_argument("--sig-file", type=str, default="*mdark10_rinv0.3.npz", help="sig file name format")
     args = parser.parse_args()
-    n137_plots(args.dir)
-    # print_cutflow_tables_rinv0p3_only(args.dir)
-    print_cutflow_tables(args.dir)
+    # n137_plots(args.dir,args.sig_dir,args.bkg_dir,args.sig_file)
+    # print_cutflow_tables_rinv0p3_only(args.dir,args.sig_dir,args.bkg_dir,args.sig_file)
+    print_cutflow_tables(args.dir,args.sig_dir,args.bkg_dir,args.sig_file)
