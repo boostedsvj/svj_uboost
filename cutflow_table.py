@@ -3,7 +3,7 @@ from collections import OrderedDict
 
 import numpy as np
 
-from common import Columns, columns_to_numpy, DATADIR, filter_pt, set_matplotlib_fontsizes, imgcat
+from common import Columns, columns_to_numpy, filter_pt, set_matplotlib_fontsizes, imgcat
 
 
 def format_val(s, ndec=2):
@@ -96,16 +96,11 @@ def make_table(cols, combined=True):
     if combined: table.append(make_column(combined_column(cols)))
     return transpose_table(table)
 
-#sig_DATADIR = '/home/snabili/data/svj_local_scripts/rho_bdt_allfiles'
-#bkg_DATADIR = '/home/snabili/hadoop/BKG/Ultra_Legacy/HADD_BKGBDT/Summer20UL18'
-sig_DATADIR = '/home/snabili/hadoop/HADD_puweight'
-bkg_DATADIR = '/home/snabili/hadoop/HADD_puweight/bkg/Summer20UL18'
-def collect_columns():
-    #signal_cols = [Columns.load(f) for f in glob.glob(DATADIR+'/signal_notruthcone/*.npz')]
-    signal_cols = [Columns.load(f) for f in glob.glob(sig_DATADIR+'/signal_notruth/*mdark10_rinv0.3.npz')]
+def collect_columns(base_dir):
+    signal_cols = [Columns.load(f) for f in glob.glob(base_dir+'/signal_notruth/*mdark10_rinv0.3.npz')]
     signal_cols.sort(key=lambda s: (s.metadata['mz'], s.metadata['rinv']))
 
-    bkg_cols = [Columns.load(f) for f in glob.glob(bkg_DATADIR+'/*.npz')]
+    bkg_cols = [Columns.load(f) for f in glob.glob(base_dir+'/bkg/Summer20UL18/*.npz')]
     bkg_cols = filter_pt(bkg_cols, 170.)
     bkg_cols = [c for c in bkg_cols if not(c.metadata['bkg_type']=='wjets' and 'htbin' not in c.metadata)]
 
@@ -122,8 +117,8 @@ def collect_columns():
     return signal_cols, bkg_cols, bkg_cols_per_type
 
 
-def print_cutflow_tables():
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns()
+def print_cutflow_tables(base_dir):
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
 
     for bkg_type, cols in bkg_cols_per_type.items():
         print('-'*80)
@@ -144,19 +139,19 @@ def print_cutflow_tables():
     print(format_table(make_table(signal_cols, combined=False)))
 
 
-def print_cutflow_tables_rinv0p3_only():
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns()
+def print_cutflow_tables_rinv0p3_only(base_dir):
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
     signal_cols = [s for s in signal_cols if s.metadata['rinv']==0.3]
     print('-'*80)
     print('signal')
     print(format_table(make_table(signal_cols, combined=False)))
 
 
-def n137_plots():
+def n137_plots(base_dir):
     import matplotlib.pyplot as plt
     set_matplotlib_fontsizes()
 
-    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns()
+    signal_cols, bkg_cols, bkg_cols_per_type = collect_columns(base_dir)
 
     # group signals by rinv
     rinvs = list(sorted(set(s.metadata['rinv'] for s in signal_cols)))
@@ -185,6 +180,9 @@ def n137_plots():
 
 
 if __name__ == '__main__':
-    n137_plots()
-    # print_cutflow_tables_rinv0p3_only()
-    print_cutflow_tables()
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("--dir", type=str, default="/home/snabili/hadoop/HADD_puweight", help="base directory for sig and bkg skims")
+    args = parser.parse_args()
+    n137_plots(args.dir)
+    # print_cutflow_tables_rinv0p3_only(args.dir)
+    print_cutflow_tables(args.dir)
