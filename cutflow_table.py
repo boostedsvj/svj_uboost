@@ -105,7 +105,7 @@ def header_column(c):
         'ak15jets_id': 'Jet ID',
         'subl_eta<2.4': r'$\abs{\eta(\widejet_2})<2.4$',
         'ak8jet.pt>500': r'$\pt(\trigjet_1) > 500\GeV$',
-        'subl_ecf>0': r'$\pt(\widejet_2^{\text{SD}}) > 0.1\GeV$',
+        'subl_ecf>0': r'$\pt(\widejet_2^{\text{SD}}) > 100\GeV$',
         'rtx>1.1': r'$\RTx>1.1$',
         'muonpt<1500': r'$\pt(\Pgm)<1500\GeV$',
         'nleptons=0': r'$N_{\Pe,\Pgm}=0$',
