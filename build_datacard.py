@@ -83,6 +83,8 @@ def skim():
     full_selection = selection
     common.logger.info(f'Selection: {selection}')
     keep = common.pull_arg('-k', '--keep', type=float, default=None).keep
+    lumi = common.pull_arg('--lumi', type=float, default=137.2, help='Luminosity (in fb-1)').lumi
+    lumi *= 1e3 # Convert to nb-1, same unit as xs
     rootfile = common.pull_arg('rootfile', type=str).rootfile
     array = svj.open_root(rootfile, load_gen=True, load_jerjec=True)
 
@@ -199,6 +201,10 @@ def skim():
                 # Handle the case where the number following 'bdt=' is not valid
                 raise ValueError("Invalid number {} following 'bdt='.".format(parts[1]))
 
+            # Apply the signal region
+            cols = cols.select(cols.to_numpy(['rt']).ravel() > 1.18)
+            cols.cutflow['rt_signalregion'] = len(cols)
+
             # Grab the input features and weights
             X = []
             weight = []
@@ -210,7 +216,7 @@ def skim():
             xgb_model.load_model(bdt_model_file)
             with common.time_and_log(f'Calculating xgboost scores for {bdt_model_file}...'):
                 score = xgb_model.predict_proba(X)[:,1]
-            weight = cols.arrays['puweight']*cols.arrays['weight']
+            weight = (cols.xs / cols.cutflow['raw']) * lumi * cols.arrays['puweight'] 
             print('weight length: ', len(weight), ' weight: ', weight)
 
             # Obtain the efficiencies for the desired BDT working point
@@ -420,7 +426,8 @@ def build_bkg_histograms(args=None):
             # Also too few events, too crazy weights
             continue
 
-        col = svj.Columns.load(skim_file)
+        #col = svj.Columns.load(skim_file)
+        col = common.Columns.load(skim_file)
 
         # Apply further selection: cutbased or bdt
         if len(col) > 0:
@@ -445,6 +452,10 @@ def build_bkg_histograms(args=None):
                     # Handle the case where the number following 'bdt=' is not valid
                     raise ValueError("Invalid number {} following 'bdt='.".format(parts[1]))
      
+                # Apply the signal region
+                col = col.select(col.to_numpy(['rt']).ravel() > 1.18)
+                #col.cutflow['rt_signalregion'] = len(col)
+
                 # Grab the input features and weights
                 X = []
                 weight = []
@@ -455,8 +466,8 @@ def build_bkg_histograms(args=None):
                 xgb_model.load_model(bdt_model_file)
                 with common.time_and_log(f'Calculating xgboost scores for {bdt_model_file}...'):
                     score = xgb_model.predict_proba(X)[:,1]
-                weight = col.arrays['puweight']*col.arrays['weight']
-                print('weight length: ', len(weight), ' weight: ', weight)
+                weight = (col.record.effxs / col.cutflow['raw']) * lumi*col.arrays['puweight']
+                #weight = col.arrays['weight']*lumi*col.arrays['puweight']
      
                 # Obtain the efficiencies for the desired BDT working point
                 # bdt_cut is the user input bdt_cut
@@ -471,7 +482,9 @@ def build_bkg_histograms(args=None):
                 bdt_ddt_score = common.ddt(mT, pT, rho, score, weight, eff*100)
      
                 # Now cut on the DDT above 0.0 (referring to above the given BDT cut value)
+                #print('Events before BDT: ', len(col))
                 col = col.select(bdt_ddt_score > 0.0) # mask for the selection
+                #print('Events after BDT: ', len(col))
             else:
                 raise Exception(f'selection must be cutbased or bdt=X.XXX, found {selection}')
         
@@ -480,9 +493,17 @@ def build_bkg_histograms(args=None):
             common.logger.info(f'Skipping {skim_file} because no events passed the preselection')
             continue
     
-        array = col.to_numpy(['mt', 'weight'])
-        mth = common.MTHistogram(array[:,0], lumi*array[:,1])
+        print("Process ", process)
+        #array = col.to_numpy(['mt', 'weight', 'puweight'])
+        array = col.to_numpy(['mt', 'puweight'])
+        cutflow = {}
+        for key in col.cutflow.keys():
+            cutflow[key] = col.cutflow[key] * lumi * (col.xs/col.cutflow['raw'])
+        cutflow['bdt_cut'] = len(array[:,1]) * lumi * (col.xs/col.cutflow['raw'])
+        print(cutflow)
+        mth = common.MTHistogram(array[:,0], weights=lumi*(col.xs / col.cutflow['raw'])*array[:,1])
         mth.metadata['process'] = process
+        mth.metadata['cutflow'] = ', '.join([f'{k}: {v}' for k, v in cutflow.items()]) # convert dict to string
 
         bkg = [b for b in ['QCD', 'TTJets', 'ZJets', 'WJets'] if b in process][0].lower()
         mths[bkg+'_individual'].append(mth) # Save individual histogram
