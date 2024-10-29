@@ -131,6 +131,7 @@ def main():
     parser.add_argument('--stageout', type=str, help='stageout directory', required=True)
     parser.add_argument('--branch', type=str, default=None, help='svj_ntuple_processing branch')
     parser.add_argument('--impl', type=str, help='storage implementation', default='xrd', choices=['xrd', 'gfal'])
+    parser.add_argument('--remote-read', action='store_true', help='read input remotely instead of local copy')
     parser.add_argument('--singlejob', action='store_true', help='Single job for testing.')
     args = parser.parse_args()
 
@@ -152,6 +153,12 @@ def main():
         group.sh('pip install --ignore-installed --no-cache "numpy<2"')
         group.sh('pip install --no-cache awkward')
         group.sh('pip install --no-cache numba')
+        if args.remote_read:
+            # really bad hack to work around lpc worker node issue
+            group.sh('xrdcp root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/uuid_local_el9.tar.gz .')
+            group.sh('tar -xzf uuid_local_el9.tar.gz')
+            group.sh('export CMAKE_ARGS="-DUUID_INCLUDE_DIR=$PWD/uuid_local_el9 -DUUID_LIBRARY=$PWD/uuid_local_el9/lib/libuuid.so.1"')
+            group.sh('pip install --no-cache xrootd fsspec-xrootd')
         pip_install_git_local(group,"boostedsvj","svj_ntuple_processing",args.branch)
 
         os_version = match("[^0-9]*([0-9]+).*","/etc/redhat-release")
@@ -164,7 +171,7 @@ def main():
         group.group_data['category'] = cat
         group.group_data['stageout'] = args.stageout
         group.group_data['storage_implementation'] = args.impl
-        group.group_data['local_copy'] = True
+        group.group_data['local_copy'] = not args.remote_read
 
         # 64249 rootfiles, approx 10s per file means approx 180 CPU hours needed
         # do 5h per job --> 180/5 = 36 jobs with 1785 files each
