@@ -140,7 +140,7 @@ def build_histogram(args=None):
         if selection=='cutbased':
             cols = common.apply_cutbased(cols)
         elif selection.startswith('bdt='):
-            wp = split_bdt(selection)
+            wp = common.split_bdt(selection)
             cols = common.apply_bdtbased(cols,wp,lumi)
         elif selection=='preselection':
             pass
@@ -366,7 +366,9 @@ def merge_histograms():
         for file in files:
             signals['_'.join(file.split('/')[1].split('_')[:-1])].append(file)
         for signal,sigfiles in signals.items():
+            print(sigfiles)
             sighists = {year: get_hists(next((f for f in sigfiles if year in f))) for year in years}
+            print(sighists)
             keys = list(sorted(set([key for y,h in sighists.items() for key in h])))
             mths = {}
             for key in keys:
