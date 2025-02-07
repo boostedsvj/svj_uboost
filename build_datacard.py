@@ -151,6 +151,9 @@ def build_histogram(args=None):
             cols = common.apply_cutbasedAnti(cols)
         elif selection=='cutbasedAntiloose':
             cols = common.apply_cutbasedAntiloose(cols)
+        elif selection.startswith('antibdt='):
+            wp = common.split_bdt(selection)
+            cols = common.apply_bdtbased(cols,wp,lumi,anti=True)
         elif selection=='preselection':
             pass
         else:
