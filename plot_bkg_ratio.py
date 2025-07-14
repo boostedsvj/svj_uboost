@@ -1,4 +1,4 @@
-from common import calculate_varDDT, apply_rt_signalregion, get_event_weight, Columns, expand_wildcards, MTHistogram
+from common import calculate_varDDT, apply_rt_signalregion, get_event_weight, Columns, expand_wildcards, MTHistogram, filter_pt, filter_ht, lumis
 import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,10 +7,31 @@ import os
 import pickle
 import scipy.stats
 
-def bdt_ddt_inputs(input_files: list[str], lumi):
+def filter_bkg(cols):
+    bkgs = [cols]
+    # Filter empty backgrounds
+    bkgs = [c for c in bkgs if len(c)]
+    # Filter out QCD with pT<300
+    # Only singular events pass the preselection, which creates spikes in the final bkg dist
+    bkgs = filter_pt(bkgs, 300)
+    # Same story for wjets with HT<400
+    bkgs = filter_ht(bkgs, 400, 'wjets')
+    # Filter out wjets inclusive bin - it's practically the HT<100 bin,
+    # and it's giving problems
+    bkgs = [c for c in bkgs if not (c.metadata['bkg_type']=='wjets' and 'htbin' not in c.metadata)]
+    return bkgs[0] if len(bkgs)==1 else None
+
+def bdt_ddt_inputs(input_files: list[str]):
     all_features = ["ecfm2b1", "pt", "mt", "rho", "rt"]
     def _get_cols(file: str):
-        return apply_rt_signalregion(Columns.load(file))
+        print(file)
+        cen_columns = Columns.load(file)
+        metadata = cen_columns.metadata
+        if metadata["sample_type"]=="bkg":
+            cen_columns = filter_bkg(cen_columns)
+            if cen_columns is None:
+                return []
+        return apply_rt_signalregion(cen_columns)
 
     def _get_features(col):
         return col.to_numpy(all_features)
@@ -41,8 +62,9 @@ def bdt_ddt_inputs(input_files: list[str], lumi):
     # Extract and filter
     X_list, W_list = [], []
     for col in tqdm.tqdm(cols, desc="Post processing"):
+        if len(col)==0: continue
         x = _get_features(col)
-        w = get_event_weight(col, lumi)
+        w = get_event_weight(col, lumis[str(col.metadata['year'])])
         if len(x) == 0: # Skipping length 0 arrays, as this messes up the masking creating routine
             continue
         # Only construct mask for background sample
@@ -64,7 +86,7 @@ def make_plot():
     hep.cms.label(rlabel="(13 TeV)")
 
     if not os.path.exists("./cut-based.cache.pkl"):
-        X, pT, mT, rho, bkg_weight = bdt_ddt_inputs(expand_wildcards(['root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer*/*.npz']), 137600)
+        X, pT, mT, rho, bkg_weight = bdt_ddt_inputs(expand_wildcards(['root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer*/*.npz']))
         pickle.dump((X, pT, mT, rho , bkg_weight), open("./cut-based.cache.pkl", "wb"))
     else:
         X, pT, mT, rho, bkg_weight = pickle.load(open("./cut-based.cache.pkl", "rb"))
@@ -79,15 +101,16 @@ def make_plot():
     ax.plot([180,650],[frac/(1-frac), frac/(1-frac)], color='k')
 
     for idx, (ddt_map, label) in enumerate([
-            ("./models/cutbased_ddt_map_allbkg_nofilter.json", "No smoothing"),
-            ("./models/cutbased_ddt_map_allbkg_smooth=1.0.json", "Smoothing $\sigma=1.0$"),
-            ("./models/cutbased_ddt_map_allbkg_smooth=0.5.json", "Smoothing $\sigma=0.5$"),
+#            ("./models/cutbased_ddt_map_allbkg_nofilter.json", "No smoothing"),
+#            ("./models/cutbased_ddt_map_allbkg_smooth=1.0.json", "Smoothing $\sigma=1.0$"),
+#            ("./models/cutbased_ddt_map_allbkg_smooth=0.5.json", "Smoothing $\sigma=0.5$"),
             #("./models/cutbased_ddt_map_allbkg_smooth=1.0_nozeroDDT.json", "Set raw DDT to original"),
+            ("./models/cutbased_ddt_map_allbkg.json", "all bkg map")
         ]):
         primary_var_ddt = calculate_varDDT(mT, pT, rho, X[:,0], bkg_weight, 0.11, ddt_map)
 
         # Plot ratio of events above and below DDT > 0 in mT bins as step histograms
-        bin_edges = np.linspace(180, 650, 51)  # 50 bins
+        bin_edges = np.linspace(180, 650, 48)  # 47 bins
         bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
         bin_width = bin_edges[1]-bin_edges[0]
         mask_above = primary_var_ddt > 0
@@ -105,6 +128,7 @@ def make_plot():
         err = np.sqrt((frac)*(1-frac)/nevt)
 
         ax.errorbar(bin_centers+bin_width*idx/10.0, ratio, yerr=err/(1-frac), marker='o', label=label)
+        print(ratio)
 
     ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
     ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
