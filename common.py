@@ -1083,14 +1083,13 @@ def create_DDT_map_dict(mt, pt, rt, var, weight, percents, cut_vals, ddt_name):
     with open(ddt_name, 'w') as f:
         json.dump(var_dict, f, cls=NumpyArrayEncoder)
 
-def calculate_varDDT(mt, pt, rt, var, weight, cut_val, ddt_name):
+def calculate_varDDT(mt, pt, rt, var, cut_val, ddt_name):
     '''
     Applies a DDT transformation to 'var' using a DDT map in (mt, pt) space.
 
     Inputs:
     - mt, pt, rT
     - var: tagger variable (e.g. BDT score)
-    - weight: event weights (not used here, but passed for compatibility)
     - cut_val: key in the DDT map dict to use (e.g. 0.1, 0.2)
     - ddt_name: path to JSON file containing the DDT map
 
@@ -1160,9 +1159,8 @@ def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(['rt']).ravel()
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
-    weight = get_event_weight(cols, lumi)
 
-    ddt_val = calculate_varDDT(mT, pT, rT, ecfm2b1, weight, cut_val, ddt_map_file)
+    ddt_val = calculate_varDDT(mT, pT, rT, ecfm2b1, cut_val, ddt_map_file)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1173,7 +1171,7 @@ def apply_cutbased(cols, cut_val=0.09):
 
 def apply_cutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion(cols)
-    ddt_val = cutbased_ddt(cols, lumi, ddt_map_file, xrootd_url, cut_val)
+    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
 
     # Now cut on the DDT above 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val > 0.0) # mask for the selection
@@ -1207,7 +1205,7 @@ def apply_anticutbased(cols, cut_val=0.09):
     return cols
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
-    ddt_val = cutbased_ddt(cols, lumi, ddt_map_file, xrootd_url, cut_val)
+    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
 
     # Now cut on the DDT BELOW 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
@@ -1266,15 +1264,14 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
 
     # Get the features for the bkg samples
     X = cols.to_numpy(bdt_features)
-    # Calculate bdt scores and event weights
+    # Calculate bdt scores
     score = calc_bdt_scores(X)
-    weight = get_event_weight(cols, lumi)
 
     # Apply the DDT
     mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(['rt']).ravel()
-    bdt_ddt_score = calculate_varDDT(mT, pT, rT, score, weight, wp, ddt_map_file)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rT, score, wp, ddt_map_file)
 
     # Now cut on the DDT above 0.0 (referring to above the given BDT cut value)
     # or < 0.0 for anti-tag CR
