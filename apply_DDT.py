@@ -194,9 +194,9 @@ def main():
     # Create the DDT 2D map
 
     # Only make the map if it doesn't exist, we will process everything without the RT cuts
+    X_full, pT_full, mT_full, rT_full, bkg_weight_full = bdt_ddt_inputs(expand_wildcards([bkg_files]), ana_variant[ana_type]["features"], apply_RT_cut=False)
+    primary_var_full = ana_variant[ana_type]["inputs_to_primary"](X_full)
     if not osp.exists(ddt_map_file):
-        X_full, pT_full, mT_full, rT_full, bkg_weight_full = bdt_ddt_inputs(expand_wildcards([bkg_files]), ana_variant[ana_type]["features"], apply_RT_cut=False)
-        primary_var_full = ana_variant[ana_type]["inputs_to_primary"](X_full)
         create_DDT_map_dict(mT_full, pT_full, rT_full, primary_var_full, bkg_weight_full, bkg_percents, ana_variant[ana_type]["cut_values"], ddt_map_file)
     else: print("The DDT has already been calculated, please change the name if you want to remake the ddt map")
 
@@ -235,8 +235,9 @@ def main():
     if 'bkg_scores_mt' in plots :
         if verbosity > 0 : print("Applying the DDT background")
         primary_var_ddt = []
+        COLORS = plt.rcParams['axes.prop_cycle'].by_key()['color']
         for cut_val in ana_variant[ana_type]["cut_values"]:
-            primary_var_ddt.append(calculate_varDDT(mT, pT, rT, primary_var, bkg_weight, cut_val, ddt_map_file))
+            primary_var_ddt.append(calculate_varDDT(mT_full, pT_full, rT_full, primary_var_full, cut_val, ddt_map_file))
 
         # Plot histograms for the DDT scores for different BDT cuts
         if verbosity > 0 : print("Making background plots")
@@ -258,9 +259,11 @@ def main():
         # Options to make the plot fancier
         hep.cms.label(rlabel="(13 TeV)")
         var_label = ana_variant[ana_type]["primary_var_label"]
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
+        for idx, (cuts, scores) in  enumerate(zip(ana_variant[ana_type]["cut_values"], primary_var_ddt)):
             score_mask = scores > 0.0 # DDT score > 0.0 is equivalent to BDT score about BDT cut value
-            ax.hist(mT[score_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight[score_mask])
+            score_rt_cut = score_mask & (rT_full > 1.18)
+            ax.hist(mT_full[~score_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} !{cuts})', weights=bkg_weight_full[~score_mask], color=COLORS[idx], alpha=0.4)
+            ax.hist(mT_full[score_rt_cut], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight_full[score_rt_cut], color=COLORS[idx])
 
         ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
         ax.set_ylabel('Events')
@@ -275,9 +278,11 @@ def main():
         fig, ax = plt.subplots(figsize=(10, 8))
         # Options to make the plot fancier
         hep.cms.label(rlabel="(13 TeV)")
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
+        for idx, (cuts, scores) in enumerate(zip(ana_variant[ana_type]["cut_values"], primary_var_ddt)):
             score_mask = scores > 0.0 # DDT score > 0.0 is equivalent to BDT score about BDT cut value
-            ax.hist(mT[score_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight[score_mask], density=True)
+            score_rt_cut = score_mask & (rT_full > 1.18)
+            ax.hist(mT_full[~score_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} !{cuts})', weights=bkg_weight_full[~score_mask], density=True, color=COLORS[idx], alpha=0.4)
+            ax.hist(mT_full[score_rt_cut], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight_full[score_rt_cut], density=True, color=COLORS[idx])
 
         ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
         ax.set_ylabel('Events')
@@ -421,7 +426,7 @@ def main():
             fom = [] # to store the figure of merit values
             for cut_val in ana_variant[ana_type]['cut_values']:
                 def _get_ddt_yield(mT, pT, rho, var, weight):
-                    score_ddt = calculate_varDDT(mT, pT, rho, var, weight, cut_val, ddt_map_file)
+                    score_ddt = calculate_varDDT(mT, pT, rho, var, cut_val, ddt_map_file)
                     score_mask = score_ddt > 0
                     mt_mask = (mT > (mz - 100)) & (mT < (mz + 100))
                     mt_fill = mT[score_mask & mt_mask]
