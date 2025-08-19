@@ -132,7 +132,7 @@ The paths to the model are currently hard-coded! Things are still too fluid for 
 
 ### Create and apply a DDT
 
-The boosted search is using a DDT to decorrelate the both BDT. This DDT can be created, evaluated, and studied using the following commands:
+The boosted search is using a DDT to decorrelate the BDT. This DDT can be created, evaluated, and studied using the following commands:
 
 ```bash
 # Create the BDT on QCD background and plot 2D maps
