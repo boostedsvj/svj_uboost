@@ -132,15 +132,33 @@ The paths to the model are currently hard-coded! Things are still too fluid for 
 
 ### Create and apply a DDT
 
-The boosted search is using a DDT to decorrelate the BDT. This DDT can be created, evaluated, and studied using the following commands:
+The boosted search is using a DDT to decorrelate the both BDT. This DDT can be created, evaluated, and studied using the following commands:
 
 ```bash
 # Create the BDT on QCD background and plot 2D maps
 python apply_DDT.py --ddt_map_file models/<new_file_name>.json --plot 2D_DDT_map
 # Re create 2D plots and determine the optimal BDT working point using the full background
-python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot 2D_DDT_map fom_significance
+python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot fom_significance
 # Plot mt score comparisons for a select few bdt working points using the full bkg
 python apply_DDT.py --plot bkg_scores_mt sig_mt_single_BDT one_sig_mt_many_bdt --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --bdt_cuts 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
+```
+
+For the cut-based analysis, we also require the ECF value (and potentially the RT) to be decorrelated to ensure that control regions
+can be constructed scultping the background MT distribution. To create the ECF DDT with a traditional RT cut, run the following commands:
+
+```bash
+# Create the DDT on using all background samples and plot 2D maps, we also generate the FOM significance plot in the same command
+python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot 2D_DDT_map fom_significance
+# Plot mt score comparisons for a select few ECF working points using the full bkg
+python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --ecf_cuts 0.08 0.09 0.10 0.11 0.12 --plot bkg_scores_mt
+```
+To create the RT DDT, then a new ECF DDT using the decorrelated RT-DDT selection, run the following commands:
+
+```bash
+# Create the DDT on using all background samples and plot 2D maps, we also generate the FOM significance plot in the same command
+python apply_DDT.py --analysis_type cut-based --rt_ddt_file models/<rt_ddt_name>.json --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot RT_DDT_map 2D_DDT_map fom_significance
+# Plot mt score comparisons for a select few ECF working points using the full bkg
+python apply_DDT.py --analysis_type cut-based --rt_ddt_file models/<rt_ddt_name>.json --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --ecf_cuts 0.08 0.09 0.10 0.11 0.12 --plot bkg_scores_mt
 ```
 
 ### Overfitting check: Kolmogorov-Smirnov test
