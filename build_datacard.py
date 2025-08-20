@@ -130,9 +130,13 @@ def build_histogram(args=None):
         if selection=='cutbased':
             cols = common.apply_cutbased(cols)
         elif selection.startswith('cutbased_ddt='):
-            cols = common.apply_cutbased_ddt(cols,lumi, cut_val=wp)
+            cols = common.apply_cutbased_ddt(cols, lumi, cut_val=wp)
+        elif selection.startswith('cutbased_rtddt='):
+            cols = common.apply_cutbased_rtddt(cols, lumi, cut_val=wp)
         elif selection.startswith('bdt='):
-            cols = common.apply_bdtbased(cols,wp,lumi)
+            cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED)
+        elif selection.startswith('bdt_rtddt='):
+            cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         # control regions
         elif selection=='cutbasedCR':
             cols = common.apply_cutbasedCR(cols)
@@ -148,6 +152,8 @@ def build_histogram(args=None):
             cols = common.apply_antiloosecutbased_ddt(cols,lumi, cut_val=wp)
         elif selection.startswith('antibdt='):
             cols = common.apply_bdtbased(cols,wp,lumi,anti=True)
+        elif selection == "rtcontrolregion_ddt":
+            cols = common.apply_rt_controlregion_ddt(cols)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
