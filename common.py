@@ -1115,27 +1115,6 @@ def apply_hemveto(cols):
     cols.cutflow['hem_veto'] = len(cols)
     return cols
 
-SELECTION_RT_SIGNAL_REGION = 1.18
-RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
-RT_DDT_FILE = 'models/rt_ddt_map.json'
-
-def apply_rt_signalregion(cols):
-    cols = cols.select(cols.arrays['rt'] > SELECTION_RT_SIGNAL_REGION)
-    cols.cutflow['rt_signalregion'] = len(cols)
-    return cols
-
-def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
-    check_if_model_exists(rt_ddt_map, xrootd_url)
-    mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
-    pT = cols.to_numpy(['pt']).ravel()
-    rT = cols.to_numpy(['rt']).ravel()
-    ddt_val = calculate_varDDT(mT, pT, rT, SELECTION_RT_SIGNAL_REGION, rt_ddt_map)
-
-    # Now cut on the DDT above 0.0 (referring to above the ecfm2b1 cut value)
-    cols = cols.select(ddt_val > 0.0) # mask for the selection
-    cols.cutflow['rt_signalregion_ddt'] = len(cols)
-    return cols
-
 def check_if_model_exists(model_file, xrootd_url):
     # Check if the file exists locally
     if not os.path.exists(model_file):
@@ -1148,9 +1127,38 @@ def check_if_model_exists(model_file, xrootd_url):
             raise RuntimeError(f"Error downloading {model_file}: {e}")
             return None
 
+SELECTION_RT_SIGNAL_REGION = 1.18
+RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
+RT_DDT_FILE = 'models/rt_ddt_map.json'
+
+def apply_rt_signalregion(cols):
+    cols = cols.select(cols.arrays['rt'] > SELECTION_RT_SIGNAL_REGION)
+    cols.cutflow['rt_signalregion'] = len(cols)
+    return cols
+
+def _get_rt_ddt_val(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
+    check_if_model_exists(rt_ddt_map, xrootd_url)
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    rT = cols.to_numpy(['rt']).ravel()
+    return calculate_varDDT(mT, pT, rT, SELECTION_RT_SIGNAL_REGION, rt_ddt_map)
+
+def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
+    ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
+    cols = cols.select(ddt_val > 0.0)
+    cols.cutflow['rt_signalregion_ddt'] = len(cols)
+    return cols
+
+def apply_rt_controlregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
+    ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
+    cols = cols.select(ddt_val < 0.0)
+    cols.cutflow['rt_controlregion_ddt'] = len(cols)
+    return cols
+
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
 DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6.json'
+DDT_FILE_CUTBASED_RT_DDT = 'models/cutbased_ddt_map_with_rt_ANv6.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
@@ -1176,6 +1184,13 @@ def apply_cutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xroo
     # Now cut on the DDT above 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val > 0.0) # mask for the selection
     cols.cutflow['cutbased_ddt'] = len(cols)
+    return cols
+
+def apply_cutbased_rtddt(cols, lumi, cut_val, ddt_mapfiles=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    cols = apply_rt_signalregion_ddt(cols)
+    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val > 0.0)
+    cols.cutflow['cutbased_rt_ddt'] = len(cols)
     return cols
 
 def apply_cutbasedCR(cols):
@@ -1212,6 +1227,9 @@ def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBA
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
+def apply_antiloosecutbased_rt_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    return apply_rt_controlregion_ddt(cols) # Anything else??
+
 def apply_antiloosecutbased(cols, cut_val=0.09):
     cols = cols.select(cols.arrays['ecfm2b1'] < cut_val)
     cols.cutflow['antiloosecutbased'] = len(cols)
@@ -1243,37 +1261,24 @@ def calc_bdt_scores(X, model_file=bdt_model_file):
         score = xgb_model.predict_proba(X)[:,1]
     return score
 
+
 DDT_PATH_BDTBASED='root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/BDT_based/'
 DDT_FILE_BDTBASED='models/bdt_ddt_AN_v6.json'
+DDT_FILE_BDTBASED_RT_DDT='models/bdt_ddt_with_rt_AN_v6.json'
 
 def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_file=DDT_FILE_BDTBASED, xrootd_url=DDT_PATH_BDTBASED):
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
-    cols = apply_rt_signalregion(cols)
-    # calc_bdt_scores doesn't like empty inputs
+
+    cols = apply_rt_signalregion(cols) if ddt_map_file == DDT_FILE_BDTBASED else apply_rt_signalregion_ddt(cols)
     if len(cols)==0:
         return cols
-
-    # make sure bdt features match the choosen file
-    bdt_features = read_training_features(model_file)
-
-    # Grab the weights and scores
-    X = []
-    score = {}
-    weight = []
-
-    # Get the features for the bkg samples
-    X = cols.to_numpy(bdt_features)
-    # Calculate bdt scores
+    X = cols.to_numpy(read_training_features(model_file))
     score = calc_bdt_scores(X)
-
-    # Apply the DDT
-    mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
+    mT = cols.to_numpy(['mt']).ravel()
     pT = cols.to_numpy(['pt']).ravel()
     bdt_ddt_score = calculate_varDDT(mT, pT, score, wp, ddt_map_file)
 
-    # Now cut on the DDT above 0.0 (referring to above the given BDT cut value)
-    # or < 0.0 for anti-tag CR
     if anti:
         cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
         cols.cutflow['ddt(antibdt)'] = len(cols)
