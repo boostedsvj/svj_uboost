@@ -40,7 +40,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='Process some inputs.')
 
     # Which analysis to run (BDT or cut-based)
-    parser.add_argument('--analysis_type', default='BDT-based', choices=['BDT-based', 'cut-based'], help='Apply DDT to BDT or cut-based analysis')
+    parser.add_argument('--analysis_type', default='BDT-based', choices=['RT', 'BDT-based', 'cut-based'], help='Computation of the DDT targetting the RT, BDT or cut-based analysis')
 
     parser.add_argument('--bkg_files', default='data/bkg_20241030/Summer20UL*/QCD*.npz', help='Background data files (default is QCD only DDT)')
     parser.add_argument('--sig_files', default='data/sig_20241030/sig_*/*.npz', help='Signal data files')
@@ -48,25 +48,20 @@ def parse_arguments():
     # BDT and ddt model
     parser.add_argument('--bdt_file', default='models/svjbdt_obj_rev_version.json', help='BDT model file')
     parser.add_argument('--ddt_map_file', default='models/bdt_ddt_AN_v6.json', help='DDT map file')
+
+    parser.add_argument('--rt_sel', type=float, default=1.18, help='RT selection defining the signal region') # TODO: update to optimal value
     parser.add_argument('--rt_ddt_file', help='DDT map file for RT selection, leave none to use non DDT RT selection')
 
     # The default value of 0.65 was the optimal cut value determined. If the training or selection changes,
     # the value should be adapted accordingly
     parser.add_argument('--sig_bdt_cut', type=float, default=0.67, help='BDT cut for signal plotting (current optimal cut is 0.67)')
 
-    # Choose the BDT cut values that you want to make for the DDT
-    # or that are in the DDT you are loading
-    # another common set of cuts is
-    # bdt_cuts = [0.0, 0.1, 0.2, 0.3, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.82, 0.85, 0.87, 0.9, 0.92, 0.95]
-    # and another common set for plots is [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    parser.add_argument('--bdt_cuts', nargs='+', type=float, default=[0.0, 0.1, 0.2, 0.3, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.82, 0.85, 0.87, 0.9, 0.92, 0.95], help='List of BDT cuts')
-    # Similar for ecf (cut points of interest are distinct from bdt)
-    parser.add_argument('--ecf_cuts', nargs='+', type=float, default=[np.round(x,4) for x in np.linspace(0.07 , 0.17, 41)])
+    # Choose the variable cut values that you want to make for the DDT
+    parser.add_argument('--var_cuts', nargs='+', type=float,  help='List of variable cuts values')
+
     # Allowed plots: 2D DDT maps, Background Scores vs MT, FOM significance,
     #                Signal mt spectrums for one BDT working point,  one signal mt spectrum for many BDT working points
-    allowed_plots = ['RT_DDT_map', '2D_DDT_map', 'bkg_scores_mt', 'fom_significance', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
-
-    # Create the parser and add the plot argument
+    allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'fom_significance', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
     parser.add_argument('--plot', nargs='*', type=str, default=[], choices=allowed_plots, help='Plots to make')
 
     # Add verbosity level argument
@@ -100,10 +95,7 @@ def save_plot(plt, plt_name, flag_tight_layout=True, **kwargs):
     plt.savefig(f'plots/{plt_name}.pdf', **kwargs)
 
 
-def bdt_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file: str | None):
-    def _get_cols(file: str):
-        return apply_rt_signalregion(Columns.load(file)) if rt_ddt_file is None else Columns.load(file)
-
+def make_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file: str | None):
     def _get_mask(x, w):
         mt = x[:,-3]
         # Creating bins from the main histogram of interest, we don't really care about the actual
@@ -123,7 +115,7 @@ def bdt_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file:
     # Extract and filter
     X_list, W_list = [], []
     for input_file in input_files:
-        col = _get_cols(input_file)
+        col = Columns.load(input_file)
         x = col.to_numpy(all_features)
         w = get_event_weight(col, lumis[str(col.metadata["year"])])
         if len(x) == 0: # Skipping length 0 arrays, as this messes up the masking creating routine
@@ -142,6 +134,15 @@ def bdt_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file:
 
     return X, pT, mT, rT, weight
 
+def make_RT_selection(mT, pT, rT, rt_sel: float | None, rt_ddt_file: str | None):
+    """Given the rT continious variable, create the boolean array for RT selection"""
+    if rt_sel is None:
+        return np.ones_like(rT, dtype=bool)
+    if rt_ddt_file is None:
+        return (rT > rt_sel)
+    return calculate_varDDT(mT, pT, rT, rt_sel, rt_ddt_file)
+
+
 #------------------------------------------------------------------------------
 # The Main Function -----------------------------------------------------------
 #------------------------------------------------------------------------------
@@ -155,54 +156,54 @@ def main():
     sig_files = args.sig_files
     model_file = args.bdt_file
     ddt_map_file = args.ddt_map_file
+    rt_sel = args.rt_sel
     rt_ddt_file = args.rt_ddt_file
     sig_bdt_cut = args.sig_bdt_cut
-    bdt_cuts = args.bdt_cuts
-    ecf_cuts = args.ecf_cuts
+    var_cuts = args.var_cuts
     plots = args.plot
     verbosity = args.verbosity
 
     set_mpl_fontsize(18, 22, 26)
 
-    #--------------------------------------------------------------------------
-    # For the cut-based search ------------------------------------------------
-    #--------------------------------------------------------------------------
-    # Grab the bkg data
     features_common = ["pt", "mt", "rho", "rt"]
-    ana_variant = {
+    ana_variant_dict = {
+        "RT": {
+            "features": ["rt"] + features_common,
+            "inputs_to_primary": lambda x: x[:, 0],
+            "prmary_var_label": "$r_T$ $>$",
+            "default_cut_vals": [np.round(x,4) for x in np.linspace(1.14, 1.22, 17)]
+        },
         "cut-based": {
             "features": ["ecfm2b1"] + features_common,
             "inputs_to_primary": lambda x: x[:, 0],
             "primary_var_label": "$M_2^{(1)}$ $>$ ",
-            "cut_values": ecf_cuts
+            "default_cut_vals": [np.round(x,4) for x in np.linspace(0.07 , 0.17, 41)]
         },
         "BDT-based": {
             "features": read_training_features(model_file) + features_common,
             "inputs_to_primary": lambda x:  calc_bdt_scores(x, model_file=model_file),
             "primary_var_label": "BDT $>$",
-            "cut_values": bdt_cuts
+            "default_cut_vals": [0.0, 0.1, 0.2, 0.3, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.82, 0.85, 0.87, 0.9, 0.92, 0.95]
         }
     }
+    # Additional parsing based on analysis method
+    ana_variant = ana_variant_dict[ana_type]
+    var_cuts = var_cuts if var_cuts is not None else ana_variant['default_cut_vals']
+    rt_sel = rt_sel if ana_variant != "RT" else None # Explicitly disabling the RT selection if computing RT DDT
 
-    # Efficiencies of the BDT/ECF are evaluated without RT cut. The optimal cut would determined with the FOM
-    # evaluation. Here we select a top level evaluation
-    X, pT, mT, rT, bkg_weight = bdt_ddt_inputs(expand_wildcards([bkg_files]), ana_variant[ana_type]["features"], rt_ddt_file)
-    primary_var = ana_variant[ana_type]["inputs_to_primary"](X)
+    # Extracting the arrays of interest
+    X, pT, mT, rT, bkg_weight = make_ddt_inputs(expand_wildcards([bkg_files]), ana_variant["features"], rt_ddt_file)
+    primary_var = ana_variant["inputs_to_primary"](X)
+    rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file) # This is an all true array for RT DDT computation
 
-    # Calculating the DDT files for RT selection, since we there is a single efficiency
-    if rt_ddt_file is not None and not osp.exists(rt_ddt_file):
-        logger.info("Creating DDT map file for RT selection")
-        eff = np.sum(bkg_weight[rT > SELECTION_RT_SIGNAL_REGION]) / np.sum(bkg_weight)
-        create_DDT_map_dict(mT, pT, rT, bkg_weight, [eff *100], [SELECTION_RT_SIGNAL_REGION], rt_ddt_file, smear=0.2)
-
-    # Only make the 2D DDT map if it doesn't exist
+    # Only make the 2D DDT map if it doesn't exist.
+    # Target efficiency is computed based on RT selection, while the DDT computation includes everything
     if not osp.exists(ddt_map_file):
-        rt_mask = np.ones_like(mT, dtype=bool) if rt_ddt_file is None else (calculate_varDDT(mT, pT, rT, str(SELECTION_RT_SIGNAL_REGION), rt_ddt_file) > 0.0)
         bkg_percents = []
         bkg_sum = np.sum(bkg_weight[(primary_var > 0.0) & rt_mask])
-        for cut_val in ana_variant[ana_type]["cut_values"]:
+        for cut_val in var_cuts:
             bkg_percents.append((np.sum(bkg_weight[(primary_var > cut_val) & rt_mask]) / bkg_sum)*100)
-        create_DDT_map_dict(mT[rt_mask], pT[rt_mask], primary_var[rt_mask], bkg_weight[rt_mask], bkg_percents, ana_variant[ana_type]["cut_values"], ddt_map_file)
+        create_DDT_map_dict(mT, pT, rt_mask, primary_var, bkg_weight, bkg_percents, var_cuts, ddt_map_file)
     else: print("The DDT has already been calculated, please change the name if you want to remake the ddt map")
 
     # Load the dictionary from the json file
@@ -229,12 +230,6 @@ def main():
         save_plot(plt, output_name)
         plt.close()
 
-    if 'RT_DDT_map' in plots and osp.exists(rt_ddt_file):
-        if verbosity > 0 : print("Making RT DDT plot")
-        with open(rt_ddt_file, 'r') as f:
-            rt_var_dict =json.load(f)
-        plot_single_ddt(*rt_var_dict[str(SELECTION_RT_SIGNAL_REGION)], '2D_map_RT_DDT')
-
     if '2D_DDT_map' in plots:
         if verbosity > 0 : print("Making variable DDT plots")
         for key in var_dict.keys():
@@ -243,14 +238,13 @@ def main():
     if 'bkg_scores_mt' in plots :
         if verbosity > 0 : print("Applying the DDT background")
         # Common label
-        var_label = ana_variant[ana_type]["primary_var_label"]
-        RT_mask = np.ones_like(mT, dtype=bool) if rt_ddt_file is not None else (calculate_varDDT(mT, pT, rT, str(SELECTION_RT_SIGNAL_REGION), rt_ddt_file) > 0.0)
-        primary_var_ddt = [calculate_varDDT(mT, pT, primary_var, cut_val, ddt_map_file) for cut_val in ana_variant[ana_type]["cut_values"]]
+        var_label = ana_variant["primary_var_label"]
+        primary_var_ddt = { cut_val: calculate_varDDT(mT, pT, rt_mask, primary_var, cut_val, ddt_map_file) for cut_val in var_cuts}
 
         # Plot histograms for the DDT scores for different BDT cuts
         if verbosity > 0 : print("Making background plots")
         fig, ax = simple_fig()
-        for cuts, scores in zip(ana_variant[ana_type]['cut_values'], primary_var_ddt):
+        for cuts, scores in primary_var_ddt.items():
             if cuts != 0.6: alpha = 0.3
             else: alpha = 1.0
             ax.hist(scores, bins=60, range=(-1.0, 1.0), alpha=alpha, histtype='step', label=f'BDT Cut {cuts}')
@@ -273,15 +267,15 @@ def main():
 
         # Apply DDT > 0.0 for the different BDT score transformations
         fig, ax = simple_fig()
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
-            SR_mask = (scores > 0.0) & RT_mask
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & rt_mask
             ax.hist(mT[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight[SR_mask])
         save_mt_fig(ax, f'bkg_events_vs_mT_{ana_type}', save_log=True)
 
         # Do it again normalized to unit area
         fig, ax = simple_fig()
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
-            SR_mask = (scores > 0.0) & RT_mask # DDT score > 0.0 is equivalent to BDT score about BDT cut value
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & rt_mask
             ax.hist(mT[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=bkg_weight[SR_mask], density=True)
         ax.set_ylabel('Events')
         save_mt_fig(ax, f'norm_bkg_events_vs_mT_{ana_type}', save_log=True)
@@ -291,9 +285,9 @@ def main():
         mT_bins = np.linspace(180, 650, 48)
         bin_centers = 0.5 * (mT_bins[:-1] + mT_bins[1:])
         bin_widths = np.diff(mT_bins)
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
-            SR_mask = (scores > 0.0) & RT_mask # DDT score > 0.0 is equivalent to BDT score about BDT cut value
-            mT_before, _ = np.histogram(mT, bins=mT_bins, weights=bkg_weight)
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & rt_mask
+            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight)
             mT_after, _ = np.histogram(mT[SR_mask], bins=mT_bins, weights=bkg_weight[SR_mask])
             with np.errstate(divide='ignore', invalid='ignore') :
                 mT_eff = mT_after / mT_before
@@ -304,9 +298,9 @@ def main():
 
         # Apply DDT > 0.0 for the different BDT score transformations
         fig, ax = simple_fig()
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
-            SR_mask = (scores > 0.0) & RT_mask # DDT score > 0.0 is equivalent to BDT score about BDT cut value
-            mT_before, _ = np.histogram(mT, bins=mT_bins, weights=bkg_weight)
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & rt_mask # DDT score > 0.0 is equivalent to BDT score about BDT cut value
+            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight)
             mT_after, _ = np.histogram(mT[SR_mask], bins=mT_bins, weights=bkg_weight[SR_mask])
             with np.errstate(divide='ignore', invalid='ignore') :
                 mT_eff = mT_after / mT_before
@@ -320,8 +314,8 @@ def main():
         # Plot ratio of events above and below DDT > 0 in mT bins as step histograms
         fig, ax = simple_fig()
         all_ratios = []
-        for cuts, scores in zip(ana_variant[ana_type]["cut_values"], primary_var_ddt):
-            mask_above = (scores > 0) & RT_mask
+        for cuts, scores in primary_var_ddt.items():
+            mask_above = (scores > 0) & rt_mask
             mask_below = ~RT_mask if rt_ddt_file is not None else (scores < 0)
             num_above, _ = np.histogram(mT[mask_above], bins=mT_bins, weights=bkg_weight[mask_above])
             num_below, _ = np.histogram(mT[mask_below], bins=mT_bins, weights=bkg_weight[mask_below])
@@ -333,7 +327,7 @@ def main():
 
         # Plot normalized ratio: divide each ratio curve by its average to see shape only
         fig, ax = simple_fig()
-        for cuts, ratio in zip(ana_variant[ana_type]["cut_values"], all_ratios):
+        for cuts, ratio in zip(primary_var_ddt.keys(), all_ratios):
             # Compute average, ignoring empty bins
             avg = np.nanmean(ratio[ratio > 0])  # or use np.mean with a mask
             normalized_ratio = np.divide(ratio, avg, out=np.zeros_like(ratio), where=avg > 0)
@@ -368,12 +362,12 @@ def main():
             s = f'bsvj_{mz:d}_10_0.3'
 
             # Grab the input features and weights
-            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = bdt_ddt_inputs(mz_files, ana_variant[ana_type]['features'], rt_ddt_file)
+            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(mz_files, ana_variant['features'], rt_ddt_file)
             if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
 
             # _____________________________________________
             # Extracting the primary variable for comparison
-            sig_primary_var = ana_variant[ana_type]["inputs_to_primary"](sig_X)
+            sig_primary_var = ana_variant["inputs_to_primary"](sig_X)
 
             # _____________________________________________
             # Apply the DDT and calculate FOM
@@ -382,14 +376,14 @@ def main():
 
             # Iterate over the bdt cut values
             fom = [] # to store the figure of merit values
-            for cut_val in ana_variant[ana_type]['cut_values']:
+            for cut_val in ana_variant['cut_values']:
                 def _get_ddt_yield(mT, pT, rT, var, weight):
                     score_ddt = calculate_varDDT(mT, pT, var, cut_val, ddt_map_file)
-                    SR_mask = (score_ddt > 0)
-                    RT_mask = np.ones_like(mT, dtype=bool) if rt_ddt_file is None else calculate_varDDT(mT,pT, rT, SELECTION_RT_SIGNAL_REGION, rt_ddt_file) > 0.0
+                    rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file)
+                    SR_mask = (score_ddt > 0) & rt_mask
                     mt_mask = (mT > (mz - 100)) & (mT < (mz + 100))
-                    mt_fill = mT[SR_mask & mt_mask & RT_mask ]
-                    weight_fill = weight[SR_mask & mt_mask & RT_mask]
+                    mt_fill = mT[SR_mask & mt_mask]
+                    weight_fill = weight[SR_mask & mt_mask]
                     return sum(np.histogram(mt_fill, bins=50, weights=weight_fill)[0])
 
                 # Calculate the figure of merit values for this bdt cut
@@ -401,14 +395,14 @@ def main():
 
             # Find the cut value corresponding to the maximum figure of merit
             fom_array = np.array(fom)
-            bdt_cuts_array = np.array(ana_variant[ana_type]['cut_values'])
+            bdt_cuts_array = np.array(ana_variant['cut_values'])
             best_bdt_cuts.append([mz, bdt_cuts_array[np.where(fom_array == max(fom_array))[0]][0]])
             if verbosity > 1 : print(best_bdt_cuts)
 
             # Plot the histogram of the metric variable range
             if mz == 300: alpha = 1.0
             else: alpha = 0.3
-            arr = ax.plot(ana_variant[ana_type]['cut_values'],fom, marker='o', label=f"m(Z') {mz}", alpha=alpha)
+            arr = ax.plot(ana_variant['cut_values'],fom, marker='o', label=f"m(Z') {mz}", alpha=alpha)
 
         # grab labels that will go into the legend
         handles, labels = ax.get_legend_handles_labels()
@@ -445,7 +439,7 @@ def main():
         mask = (best_bdt_cuts[:,0] >= 200) & (best_bdt_cuts[:,0] <= 400)
         selected_values = best_bdt_cuts[mask, 1]
         average = np.mean(selected_values)
-        optimal_bdt_cut = min(ana_variant[ana_type]['cut_values'], key=lambda x: abs(x - average)) # Finding the nearest value in ana_variant[ana_type]['cut_values'] to the calculated average
+        optimal_bdt_cut = min(ana_variant['cut_values'], key=lambda x: abs(x - average)) # Finding the nearest value in ana_variant['cut_values'] to the calculated average
 
         # plot the best bdt cuts
         fig = plt.figure(figsize=(10, 7))
@@ -479,12 +473,12 @@ def main():
                 mz = sig_col.metadata['mz']
 
                 # Signal Column
-                sig_X, sig_pT, sig_mT, sig_rT, sig_weight = bdt_ddt_inputs([sig_file], ana_variant[ana_type]['features'])
+                sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs([sig_file], ana_variant['features'])
                 if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
 
                 # _____________________________________________
                 # Open the trained models and get the scores
-                sig_score = ana_variant[ana_type]["inputs_to_primary"](sig_X)
+                sig_score = ana_variant["inputs_to_primary"](sig_X)
 
                 # _____________________________________________
                 # Apply the DDT  to the signal
@@ -494,7 +488,8 @@ def main():
                 # Make mT distributions
                 if mz != 300: alpha = 0.3
                 else: alpha = 1.0
-                SR_mask = sig_score_ddt > 0.0 # DDT score > 0.0 is equivalent to BDT score about BDT cut value
+                rt_mask = make_RT_selection(sig_mT, sig_pT, sig_rT, rt_sel, rt_ddt_file)
+                SR_mask = (sig_score_ddt > 0.0) & rt_mask
                 ax.hist(sig_mT[SR_mask], weights=sig_weight[SR_mask], bins=47, range=(180,650), histtype='step', label=f"m(Z')={mz}", alpha=alpha)
 
             ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
@@ -532,7 +527,7 @@ def main():
             mz = sig_col.metadata['mz']
 
             # Signal Column
-            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = bdt_ddt_inputs(sig_col, ana_variant[ana_type]['features'])
+            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(sig_col, ana_variant['features'])
             if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
 
             # _____________________________________________
@@ -544,14 +539,14 @@ def main():
             # Apply the DDT  to the signal at all the cut values
             if verbosity > 0 : print("Applying the DDT signal")
             sig_score_ddt = []
-            for cut_val in ana_variant[ana_type]['cut_values'] :
+            for cut_val in ana_variant['cut_values'] :
                 sig_score_ddt.append(calculate_varDDT(sig_mT, sig_pT, sig_score, cut_val, ddt_map_file) )
 
             # Plot histograms for the DDT scores for different BDT cuts
             fig, ax = plt.subplots(figsize=(10, 8))
             # Options to make the plot fancier
             hep.cms.label(rlabel="(13 TeV)")
-            for cuts, scores in zip(ana_variant[ana_type]['cut_values'], sig_score_ddt):
+            for cuts, scores in zip(ana_variant['cut_values'], sig_score_ddt):
                 if cuts != 0.7: alpha = 0.3
                 else: alpha = 1.0
                 ax.hist(scores, weights=sig_weight, bins=50, range=(-1.0, 1.0), alpha=alpha, histtype='step', label=f'BDT Cut {cuts}')
@@ -565,7 +560,7 @@ def main():
             fig, ax = plt.subplots(figsize=(10, 8))
             # Options to make the plot fancier
             hep.cms.label(rlabel="(13 TeV)")
-            for cuts, scores in zip(ana_variant[ana_type]['cut_values'], sig_score_ddt):
+            for cuts, scores in zip(ana_variant['cut_values'], sig_score_ddt):
                 SR_mask = scores > 0.0 # DDT score > 0.0 is equivalent to BDT score about BDT cut value
                 ax.hist(sig_mT[SR_mask], weights=sig_weight[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT(BDT cut = {cuts})')
 
@@ -582,7 +577,7 @@ def main():
             fig, ax = plt.subplots(figsize=(10, 8))
             # Options to make the plot fancier
             hep.cms.label(rlabel="(13 TeV)")
-            for cuts, scores in zip(ana_variant[ana_type]['cut_values'], sig_score_ddt):
+            for cuts, scores in zip(ana_variant['cut_values'], sig_score_ddt):
                 SR_mask = scores > 0.0 # DDT score > 0.0 is equivalent to BDT score about BDT cut value
                 ax.hist(sig_mT[SR_mask], weights=sig_weight[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT(BDT cut = {cuts})', density=True)
 
