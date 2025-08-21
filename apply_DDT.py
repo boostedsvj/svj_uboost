@@ -95,7 +95,7 @@ def save_plot(plt, plt_name, flag_tight_layout=True, **kwargs):
     plt.savefig(f'plots/{plt_name}.pdf', **kwargs)
 
 
-def make_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file: str | None):
+def make_ddt_inputs(input_files: list[str], all_features: list[str]):
     def _get_mask(x, w):
         mt = x[:,-3]
         # Creating bins from the main histogram of interest, we don't really care about the actual
@@ -136,11 +136,12 @@ def make_ddt_inputs(input_files: list[str], all_features: list[str], rt_ddt_file
 
 def make_RT_selection(mT, pT, rT, rt_sel: float | None, rt_ddt_file: str | None):
     """Given the rT continious variable, create the boolean array for RT selection"""
-    if rt_sel is None:
+    if rt_sel is None: # Ignore RT selection
         return np.ones_like(rT, dtype=bool)
-    if rt_ddt_file is None:
+    if rt_ddt_file is None: # Performing non-DDT selection
         return (rT > rt_sel)
-    return calculate_varDDT(mT, pT, rT, rt_sel, rt_ddt_file)
+    mask = np.ones_like(mT, dtype=bool)
+    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file) > 0.0
 
 
 #------------------------------------------------------------------------------
@@ -189,12 +190,13 @@ def main():
     # Additional parsing based on analysis method
     ana_variant = ana_variant_dict[ana_type]
     var_cuts = var_cuts if var_cuts is not None else ana_variant['default_cut_vals']
-    rt_sel = rt_sel if ana_variant != "RT" else None # Explicitly disabling the RT selection if computing RT DDT
+    rt_sel = None if ana_type == "RT" else rt_sel # Explicitly disabling RT selection if computing RT DDT
 
     # Extracting the arrays of interest
-    X, pT, mT, rT, bkg_weight = make_ddt_inputs(expand_wildcards([bkg_files]), ana_variant["features"], rt_ddt_file)
+    X, pT, mT, rT, bkg_weight = make_ddt_inputs(expand_wildcards([bkg_files]), ana_variant["features"])
     primary_var = ana_variant["inputs_to_primary"](X)
     rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file) # This is an all true array for RT DDT computation
+    print(np.sum(rt_mask), len(rt_mask))
 
     # Only make the 2D DDT map if it doesn't exist.
     # Target efficiency is computed based on RT selection, while the DDT computation includes everything
@@ -362,7 +364,7 @@ def main():
             s = f'bsvj_{mz:d}_10_0.3'
 
             # Grab the input features and weights
-            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(mz_files, ana_variant['features'], rt_ddt_file)
+            sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(mz_files, ana_variant['features'])
             if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
 
             # _____________________________________________
@@ -529,14 +531,8 @@ def main():
             # Signal Column
             sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(sig_col, ana_variant['features'])
             if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
-
-            # _____________________________________________
-            # Open the trained models and get the scores
-
             sig_score = calc_bdt_scores(sig_X, model_file=model_file)
 
-            # _____________________________________________
-            # Apply the DDT  to the signal at all the cut values
             if verbosity > 0 : print("Applying the DDT signal")
             sig_score_ddt = []
             for cut_val in ana_variant['cut_values'] :
