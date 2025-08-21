@@ -1160,12 +1160,6 @@ def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PA
     cols.cutflow['rt_signalregion_ddt'] = len(cols)
     return cols
 
-def apply_rt_controlregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
-    ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
-    cols = cols.select(ddt_val < 0.0)
-    cols.cutflow['rt_controlregion_ddt'] = len(cols)
-    return cols
-
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
 DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6.json'
@@ -1173,13 +1167,14 @@ DDT_FILE_CUTBASED_RT_DDT = 'models/cutbased_ddt_map_with_rt_ANv6.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
-
     # Get features necessary to apply the DDT
     mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
     pT = cols.to_numpy(['pt']).ravel()
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
-
-    ddt_val = calculate_varDDT(mT, pT, ecfm2b1, cut_val, ddt_map_file)
+    # For this function, we are assuming the RT signal region is applied, a separation method
+    # Will need to be computed for the antiloose control region
+    rt_mask = np.ones_like(mT, dtype=True)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1230,15 +1225,30 @@ def apply_anticutbased(cols, cul_val=0.09):
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
-    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+def cutbased_ddt_without_rt(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
+    check_if_model_exists(ddt_map_file, xrootd_url)
+    # Get features necessary to apply the DDT
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    rT = cols.to_numpy(['rt']).ravel()
+    ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
+    t_mask = np.ones_like(mT, dtype=bool)
+    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RT_SIGNAL_REGION, rt_ddt_file)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file)
+    return ddt_val
 
-    # Now cut on the DDT BELOW 0.0 (referring to above the ecfm2b1 cut value)
+
+def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+    ddt_val = cutbased_ddt_without_rt(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
-def apply_antiloosecutbased_rt_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+def apply_antiloosecutbased_rtddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    ddt_val = cutbased_ddt_without_rt(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val < 0.0) # mask for the selection
+    cols.cutflow['anticutbased_rtddt'] = len(cols)
+    return cols
     return apply_rt_controlregion_ddt(cols) # Anything else??
 
 def apply_antiloosecutbased(cols, cut_val=0.09):
