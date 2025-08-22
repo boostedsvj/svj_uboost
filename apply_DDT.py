@@ -196,7 +196,6 @@ def main():
     X, pT, mT, rT, bkg_weight = make_ddt_inputs(expand_wildcards([bkg_files]), ana_variant["features"])
     primary_var = ana_variant["inputs_to_primary"](X)
     rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file) # This is an all true array for RT DDT computation
-    print(np.sum(rt_mask), len(rt_mask))
 
     # Only make the 2D DDT map if it doesn't exist.
     # Target efficiency is computed based on RT selection, while the DDT computation includes everything
