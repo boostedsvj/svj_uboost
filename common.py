@@ -1121,7 +1121,7 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name):
     # Just folding it to the last bin for now
     pt_bin = np.clip(np.digitize(pt, PT_edges) - 1, 0, len(PT_edges) - 2)
     mt_pt_bin = np.clip(np.digitize(mt/pt, MT_PT_edges) - 1, 0, len(MT_PT_edges) - 2)
-    rt_bin = np.clip(np.digitize(pt, RT_edges), -1 , 0 , len(RT_edges)-2)
+    rt_bin = np.digitize(rt_sel, RT_edges)-1
 
     # Apply DDT: var - DDT map value at the appropriate bin
     varDDT = var - var_map_smooth[mt_pt_bin, pt_bin, rt_bin]
