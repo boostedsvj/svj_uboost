@@ -294,7 +294,7 @@ def main():
         bin_widths = np.diff(mT_bins)
         for cuts, scores in primary_var_ddt.items():
             SR_mask = (scores > 0.0) & rt_mask
-            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight)
+            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight[rt_mask])
             mT_after, _ = np.histogram(mT[SR_mask], bins=mT_bins, weights=bkg_weight[SR_mask])
             with np.errstate(divide='ignore', invalid='ignore') :
                 mT_eff = mT_after / mT_before
@@ -307,7 +307,7 @@ def main():
         fig, ax = simple_fig()
         for cuts, scores in primary_var_ddt.items():
             SR_mask = (scores > 0.0) & rt_mask # DDT score > 0.0 is equivalent to BDT score about BDT cut value
-            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight)
+            mT_before, _ = np.histogram(mT[rt_mask], bins=mT_bins, weights=bkg_weight[rt_mask])
             mT_after, _ = np.histogram(mT[SR_mask], bins=mT_bins, weights=bkg_weight[SR_mask])
             with np.errstate(divide='ignore', invalid='ignore') :
                 mT_eff = mT_after / mT_before
