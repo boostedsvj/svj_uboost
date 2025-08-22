@@ -132,34 +132,50 @@ The paths to the model are currently hard-coded! Things are still too fluid for 
 
 ### Create and apply a DDT
 
-The boosted search is using a DDT to decorrelate the BDT. This DDT can be created, evaluated, and studied using the following commands:
+The boosted search is using a DDT to decorrelate the variable selection with MT. For the creation of the the typical DDT
+using the BDT, run the following commands:
 
 ```bash
 # Create the BDT on QCD background and plot 2D maps
-python apply_DDT.py --ddt_map_file models/<new_file_name>.json --plot 2D_DDT_map
-# Re create 2D plots and determine the optimal BDT working point using the full background
-python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot fom_significance
-# Plot mt score comparisons for a select few bdt working points using the full bkg
+python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/QCD*.npz" --plot 2D_DDT_map fom_significance
+# Determining the optimal cut value by comparing the full background sample and the comparing this with the signal sample
+python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --plot fom_significance
+# Plot mt score comparisons to check for MT spectrum sculpting
 python apply_DDT.py --plot bkg_scores_mt sig_mt_single_BDT one_sig_mt_many_bdt --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --bdt_cuts 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
 ```
 
-For the cut-based analysis, we also require the ECF value (and potentially the RT) to be decorrelated to ensure that control regions
-can be constructed scultping the background MT distribution. To create the ECF DDT with a traditional RT cut, run the following commands:
+For the cut-based analysis, run the following commands:
 
 ```bash
 # Create the DDT on using all background samples and plot 2D maps, we also generate the FOM significance plot in the same command
-python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot 2D_DDT_map fom_significance
+python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --plot 2D_DDT_map fom_significance
 # Plot mt score comparisons for a select few ECF working points using the full bkg
 python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --ecf_cuts 0.08 0.09 0.10 0.11 0.12 --plot bkg_scores_mt
 ```
-To create the RT DDT, then a new ECF DDT using the decorrelated RT-DDT selection, run the following commands:
+
+Because we need a larger control region for the ralphabet method, a loose
+control region is defined by relaxing the RT requirements. We will need to
+compute the RT selection with a DDT-modified RT selection. To compute the
+RT-DDT map, run the following commands:
 
 ```bash
-# Create the DDT on using all background samples and plot 2D maps, we also generate the FOM significance plot in the same command
-python apply_DDT.py --analysis_type cut-based --rt_ddt_file models/<rt_ddt_name>.json --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --plot RT_DDT_map 2D_DDT_map fom_significance
-# Plot mt score comparisons for a select few ECF working points using the full bkg
-python apply_DDT.py --analysis_type cut-based --rt_ddt_file models/<rt_ddt_name>.json --ddt_map_file models/<new_file_name>.json --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --ecf_cuts 0.08 0.09 0.10 0.11 0.12 --plot bkg_scores_mt
+# Creating the the RT-DDT map using the full background sample, and scanning for an optimal cut point
+python apply_DDT.py --analysis_type RT --ddt_map_file ./models/<rt_ddt_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --plot 2D_DDT_map fom_significance
+# Plotting the events that pass/fail the RT-DDT selection to check for MT sculpting
+python apply_DDT.py --analysis_type RT --ddt_map_file ./models/<rt_ddt_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --var_cuts 1.16 1.17 1.18 1.19 1.20 --plot bkg_scores_mt
 ```
+
+After the RT-DDT map, you can use this should be used to re-compute the ECF and BDT-DDT maps:
+
+```bash
+# Re-running the ECF-ddt map with a different selection point (note the new rt_sel and rt_ddt_file arguments
+python apply_DDT.py --analysis_type cut-based --rt-sel 1.20 --rt_ddt_file ./models/<rt_ddt_name>.json  --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --plot 2D_DDT_map fom_significance
+# Similar for the BDT-DDT map re calculation
+python apply_DDT.py --analysis_type BDT-based --rt-sel 1.20 --rt_ddt_file ./models/<rt_ddt_name>.json --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/QCD*.npz" --plot 2D_DDT_map fom_significance
+```
+
+A collection of all these commands can be found in the `./run_ddt_construct.sh` script
+
 
 ### Overfitting check: Kolmogorov-Smirnov test
 
