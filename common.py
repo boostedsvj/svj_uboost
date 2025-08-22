@@ -9,6 +9,7 @@ import numpy as np
 from datetime import datetime
 import json
 import tqdm
+import multiprocessing as mp
 from cycler import cycler
 
 np.random.seed(1001)
@@ -1026,11 +1027,18 @@ def varmap(mt, pt, rt_sel, var, weight, percent, cut_val, smear):
     pt_bin_idx = np.digitize(pt[cuts], PT_edges) - 1
     rt_bin_idx = np.digitize(rt_sel[cuts], RT_edges) -1
 
-    # Loop over mt and pt bins
-    for (i,j,k) in tqdm.tqdm([(i,j,k) for i in range(len(MT_PT_edges)-1) for j in range(len(PT_edges)-1) for k in [0,1]], desc="DDT bin"):
+    def _calc_bin(bin_idx):
+        i,j,k = bin_idx
         BIN_CUT = (mt_pt_bin_idx == i) & (pt_bin_idx == j) & (rt_bin_idx == k)
         if np.sum(BIN_CUT) > 0:
-            VAR_map[i][j][k] = weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent)
+            return weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent)
+        return 0
+
+    with mp.pool.ThreadPool(mp.cpu_count() * 3 //4) as p:
+        bin_list = [(i,j,k) for i in range(len(MT_PT_edges)-1) for j in range(len(PT_edges)-1) for k in [0,1]]
+        result_list = list(tqdm.tqdm(p.imap(_calc_bin, bin_list), desc="DDT bin", total=len(bin_list)))
+        for (i,j,k), result in zip(bin_list, result_list):
+            VAR_map[i][j][k] = result
 
     # Actually applying the smoothing process
     VAR_map_smooth = gaussian_filter(VAR_map, sigma=smear)
