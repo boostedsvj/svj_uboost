@@ -385,6 +385,9 @@ def main():
         fig = plt.figure(figsize=(10, 7))
         hep.cms.label(rlabel="(13 TeV)") # full run 2
         ax = fig.gca()
+        ana_label = ana_type
+        if rt_ddt_file is not None:
+            ana_label += 'withRTDDT'
 
         best_bdt_cuts = [] #store the best bdt values
         # Iterate over the variables in the 'con' dictionary
@@ -451,7 +454,7 @@ def main():
 
         # Save the plot as a PDF and png file
         # cannot use layout_tight, will cause saving errors
-        save_plot(plt, f'metrics_{ana_type}_FOM', flag_tight_layout=False, bbox_inches='tight')
+        save_plot(plt, f'metrics_{ana_label}_FOM', flag_tight_layout=False, bbox_inches='tight')
         plt.close()
 
         # sort the best bdt cuts
@@ -475,7 +478,7 @@ def main():
         ax.set_ylabel('Best BDT Cut Value' if ana_type == "BDT-based" else "ECF cut value")
         ax.set_xlabel("$m(\\mathrm{Z'})$ [GeV]")
         # cannot use layout_tight, will cause saving errors
-        save_plot(plt, f'best_{ana_type}_cuts', flag_tight_layout=False, bbox_inches='tight')
+        save_plot(plt, f'best_{ana_label}_cuts', flag_tight_layout=False, bbox_inches='tight')
         plt.close()
 
 
