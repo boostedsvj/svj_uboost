@@ -165,7 +165,7 @@ python apply_DDT.py --analysis_type RT --ddt_map_file ./models/<rt_ddt_name>.jso
 python apply_DDT.py --analysis_type RT --ddt_map_file ./models/<rt_ddt_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --var_cuts 1.16 1.17 1.18 1.19 1.20 --plot bkg_scores_mt
 ```
 
-After the RT-DDT map, you can use this should be used to re-compute the ECF and BDT-DDT maps:
+After the RT-DDT map, this should be used to re-compute the ECF and BDT-DDT maps:
 
 ```bash
 # Re-running the ECF-ddt map with a different selection point (note the new rt_sel and rt_ddt_file arguments
