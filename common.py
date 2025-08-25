@@ -1236,7 +1236,7 @@ def apply_anticutbased(cols, cul_val=0.09):
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def cutbased_ddt_without_rt(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
+def cutbased_ddt_not_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
     # Get features necessary to apply the DDT
     mT = cols.to_numpy(['mt']).ravel()
@@ -1250,13 +1250,13 @@ def cutbased_ddt_without_rt(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xroo
 
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
-    ddt_val = cutbased_ddt_without_rt(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
+    ddt_val = cutbased_ddt_not_rt_cut(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
 def apply_rtantiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
-    ddt_val = cutbased_ddt_without_rt(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
+    ddt_val = cutbased_ddt_not_rt_cut(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
