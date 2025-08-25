@@ -999,7 +999,7 @@ def weighted_percentile(x, w, percent):
 
     return upper_val *int_w + lower_val * (1-int_w)
 
-def varmap(mt, pt, rt_sel, var, weight, percent, cut_val, smear):
+def varmap(mt, pt, rt_sel, var, weight, percent, cut_val):
     '''
     3D map for DDT, defined in (mt/pt, pt, rt) space. The rt array in this case should be a boolean array indicating
     if the array passed or failed the RT selection.
@@ -1040,11 +1040,7 @@ def varmap(mt, pt, rt_sel, var, weight, percent, cut_val, smear):
         for (i,j,k), result in zip(bin_list, result_list):
             VAR_map[i][j][k] = result
 
-    # Actually applying the smoothing process
-    VAR_map_smooth = gaussian_filter(VAR_map, sigma=smear)
-
-    # Return smoothed map and the new mt and pt bin edges
-    return VAR_map_smooth, MT_PT_edges, PT_edges, RT_edges
+    return VAR_map, MT_PT_edges, PT_edges, RT_edges
 
 
 # Class that converts numpy arrays into list so they can be easily stored in json files
@@ -1055,7 +1051,7 @@ class NumpyArrayEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NumpyArrayEncoder, self).default(obj)
 
-def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_name, smear=1.0):
+def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_name):
     '''
     Creates a dictionary of DDT 2D maps for a range of cut_vals and background efficiencies (percents).
     Each DDT map is a 3D array of tagger thresholds binned in (mt/pt, pt, rt) space, where RT is a boolean array
@@ -1077,15 +1073,15 @@ def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_nam
 
     for cut_val, percent in zip(cut_vals, percents):
         print(f"Creating DDT 2D map for cut value {cut_val}, efficiency {percent}%")
-        var_map_smooth, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val, smear)
-        var_dict[str(cut_val)] = (var_map_smooth.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
+        var_map, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
+        var_dict[str(cut_val)] = (var_map.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
 
     if ddt_name is None:
         ddt_name = 'ddt_' + str(var) + '_' + datetime.now().strftime('%Y%m%d') + '.json'
     with open(ddt_name, 'w') as f:
         json.dump(var_dict, f, cls=NumpyArrayEncoder)
 
-def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name):
+def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     '''
     Applies a DDT transformation to 'var' using a DDT map in (mt, pt) space.
 
@@ -1110,11 +1106,14 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name):
         raise KeyError(f"The key {cut_val} does not exist in the dictionary.")
 
     # Get the smoothed map and bin edges
-    var_map_smooth, MT_PT_edges, PT_edges, RT_edges = var_dict[str(cut_val)]
-    var_map_smooth = np.array(var_map_smooth)
+    var_map, MT_PT_edges, PT_edges, RT_edges = var_dict[str(cut_val)]
+    var_map = np.array(var_map)
     MT_PT_edges = np.array(MT_PT_edges)
     PT_edges = np.array(PT_edges)
     RT_edges = np.array(RT_edges)
+
+    # Applying a smearing on the DDT map 
+    var_map_smooth = gaussian_filter(var_map, smear)
 
     # Bin index lookup with digitize. Using minus 2 in clip becase we are no
     # longer applying the ddt_window cut, so there will be overflow entries.
