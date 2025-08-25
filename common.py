@@ -1112,7 +1112,7 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     PT_edges = np.array(PT_edges)
     RT_edges = np.array(RT_edges)
 
-    # Applying a smearing on the DDT map 
+    # Applying a smearing on the DDT map
     var_map_smooth = gaussian_filter(var_map, smear)
 
     # Bin index lookup with digitize. Using minus 2 in clip becase we are no
@@ -1162,7 +1162,7 @@ def _get_rt_ddt_val(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(['rt']).ravel()
     mask = np.ones_like(mT, dtype=bool)
-    return calculate_varDDT(mT, pT, mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_map)
+    return calculate_varDDT(mT, pT, mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_map, smear=0.2)
 
 def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
     ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
@@ -1184,7 +1184,7 @@ def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     # For this function, we are assuming the RT signal region is applied, a separation method
     # Will need to be computed for the antiloose control region
     rt_mask = np.ones_like(mT, dtype=bool)
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=1.0)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1243,8 +1243,8 @@ def cutbased_ddt_not_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xroo
     rT = cols.to_numpy(['rt']).ravel()
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
-    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file) > 0.0
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file)
+    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=1.0)
     return ddt_val
 
 
@@ -1308,7 +1308,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
     mT = cols.to_numpy(['mt']).ravel()
     pT = cols.to_numpy(['pt']).ravel()
     rT_mask = np.ones_like(mT, dtype=bool)
-    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=1.0)
 
     if anti:
         cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
@@ -1330,8 +1330,8 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(["rt"]).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
-    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file) > 0.0
-    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file)
+    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
+    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=1.0)
 
     cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
     cols.cutflow['loose_ddt(antibdt)'] = len(cols)

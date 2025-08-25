@@ -19,6 +19,7 @@ import matplotlib
 matplotlib.use('Agg') # prevents opening displays (fast), must use before pyplot
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, roc_curve, roc_auc_score, auc
+from scipy.ndimage import gaussian_filter
 import pandas as pd
 import xgboost as xgb
 import mplhep as hep
@@ -141,7 +142,7 @@ def make_RT_selection(mT, pT, rT, rt_sel: float | None, rt_ddt_file: str | None)
     if rt_ddt_file is None: # Performing non-DDT selection
         return (rT > rt_sel)
     mask = np.ones_like(mT, dtype=bool)
-    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file) > 0.0
+    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file, smear=0.2) > 0.0
 
 
 #------------------------------------------------------------------------------
@@ -171,7 +172,7 @@ def main():
         "RT": {
             "features": ["rt"] + features_common,
             "inputs_to_primary": lambda x: x[:, 0],
-            "prmary_var_label": "$r_T$ $>$",
+            "primary_var_label": "$r_T$ $>$",
             "default_cut_vals": [np.round(x,4) for x in np.linspace(1.14, 1.22, 17)],
             "smear": 0.2,
         },
@@ -179,7 +180,7 @@ def main():
             "features": ["ecfm2b1"] + features_common,
             "inputs_to_primary": lambda x: x[:, 0],
             "primary_var_label": "$M_2^{(1)}$ $>$ ",
-            "default_cut_vals": [np.round(x,4) for x in np.linspace(0.07 , 0.17, 41)],
+            "default_cut_vals": [np.round(x,4) for x in np.linspace(0.07 , 0.17, 21)],
             "smear": 1.0,
         },
         "BDT-based": {
@@ -208,7 +209,7 @@ def main():
         bkg_sum = np.sum(bkg_weight[(primary_var > 0.0) & rt_mask])
         for cut_val in var_cuts:
             bkg_percents.append((np.sum(bkg_weight[(primary_var > cut_val) & rt_mask]) / bkg_sum)*100)
-        create_DDT_map_dict(mT, pT, rt_mask, primary_var, bkg_weight, bkg_percents, var_cuts, ddt_map_file, smear=smear)
+        create_DDT_map_dict(mT, pT, rt_mask, primary_var, bkg_weight, bkg_percents, var_cuts, ddt_map_file)
     else: print("The DDT has already been calculated, please change the name if you want to remake the ddt map")
 
     # Load the dictionary from the json file
@@ -217,6 +218,9 @@ def main():
 
     if '2D_DDT_map' in plots:
         if verbosity > 0 : print("Making variable DDT plots")
+        ana_label = ana_type
+        if rt_ddt_file is not None:
+            ana_label += 'withRTDDT'
         for cut_val, (var_map, MT_PT_edges, PT_edges, RT_edges) in var_dict.items():
             var_map =  np.array(var_map)
             MT_PT_edges = np.array(MT_PT_edges)
@@ -229,14 +233,14 @@ def main():
                 'cmap': 'viridis',
             }
 
-            im = ax.imshow(var_map[:,:,1].T, **im_show_kwargs)
+            im = ax.imshow(gaussian_filter(var_map[:,:,1], smear).T, **im_show_kwargs)
             ax.figure.colorbar(im, label='DDT Map value')
             ax.set_xlabel('$\\frac{m_{\\mathrm{T}}}{p_{\\mathrm{T}}}$')
             ax.set_ylabel('$p_{\\mathrm{T}}$ [GeV]')
-            save_plot(plt, f'2D_map_{ana_type}_{cut_val}')
+            save_plot(plt, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
-                ax.imshow(var_map[:,:,0].T, **im_show_kwargs)
-                save_plot(plt, f'2D_map_{ana_type}_{cut_val}_antiRT')
+                ax.imshow(gaussian_filter(var_map[:,:,0], smear).T, **im_show_kwargs)
+                save_plot(plt, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
     if 'bkg_scores_mt' in plots :
@@ -246,7 +250,7 @@ def main():
         ana_label = ana_type
         if rt_ddt_file is not None:
             ana_label += 'withRTDDT'
-        primary_var_ddt = { cut_val: calculate_varDDT(mT, pT, rt_mask, primary_var, cut_val, ddt_map_file) for cut_val in var_cuts}
+        primary_var_ddt = { cut_val: calculate_varDDT(mT, pT, rt_mask, primary_var, cut_val, ddt_map_file, smear=smear) for cut_val in var_cuts}
 
         # Plot histograms for the DDT scores for different BDT cuts
         if verbosity > 0 : print("Making background plots")
@@ -406,7 +410,7 @@ def main():
             for cut_val in var_cuts:
                 def _get_ddt_yield(mT, pT, rT, var, weight):
                     rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file)
-                    score_ddt = calculate_varDDT(mT, pT, rt_mask, var, cut_val, ddt_map_file)
+                    score_ddt = calculate_varDDT(mT, pT, rt_mask, var, cut_val, ddt_map_file, smear=smear)
                     SR_mask = (score_ddt > 0) & rt_mask
                     mt_mask = (mT > (mz - 100)) & (mT < (mz + 100))
                     mt_fill = mT[SR_mask & mt_mask]
@@ -510,7 +514,7 @@ def main():
                 # _____________________________________________
                 # Apply the DDT  to the signal
                 if verbosity > 0 : print("Applying the DDT signal")
-                sig_score_ddt = calculate_varDDT(sig_mT, sig_pT, sig_score, sig_bdt_cut, ddt_map_file)
+                sig_score_ddt = calculate_varDDT(sig_mT, sig_pT, sig_score, sig_bdt_cut, ddt_map_file, smear=smear)
 
                 # Make mT distributions
                 if mz != 300: alpha = 0.3
@@ -561,7 +565,7 @@ def main():
             if verbosity > 0 : print("Applying the DDT signal")
             sig_score_ddt = []
             for cut_val in ana_variant['cut_values'] :
-                sig_score_ddt.append(calculate_varDDT(sig_mT, sig_pT, sig_score, cut_val, ddt_map_file) )
+                sig_score_ddt.append(calculate_varDDT(sig_mT, sig_pT, sig_score, cut_val, ddt_map_file,smear=smear))
 
             # Plot histograms for the DDT scores for different BDT cuts
             fig, ax = plt.subplots(figsize=(10, 8))
