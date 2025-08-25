@@ -131,11 +131,11 @@ def build_histogram(args=None):
             cols = common.apply_cutbased(cols)
         elif selection.startswith('cutbased_ddt='):
             cols = common.apply_cutbased_ddt(cols, lumi, cut_val=wp)
-        elif selection.startswith('cutbased_rtddt='):
-            cols = common.apply_cutbased_rtddt(cols, lumi, cut_val=wp)
+        elif selection.startswith('rtcutbased_ddt='):
+            cols = common.apply_rtcutbased_ddt(cols, lumi, cut_val=wp)
         elif selection.startswith('bdt='):
             cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED)
-        elif selection.startswith('bdt_rtddt='):
+        elif selection.startswith('rtbdt_ddt='):
             cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         # control regions
         elif selection=='cutbasedCR':
@@ -150,10 +150,16 @@ def build_histogram(args=None):
             cols = common.apply_antiloosecutbased(cols)
         elif selection.startswith('antiloosecutbased_ddt='):
             cols = common.apply_antiloosecutbased_ddt(cols,lumi, cut_val=wp)
+        elif selection.startswith('rtantiloosecutbased_ddt='):
+            cols = common.apply_rtantiloosecutbased_ddt(cols,lumi, cut_val=wp)
         elif selection.startswith('antibdt='):
             cols = common.apply_bdtbased(cols,wp,lumi,anti=True)
-        elif selection == "rtcontrolregion_ddt":
-            cols = common.apply_rt_controlregion_ddt(cols)
+        elif selection.startswith('rtantibdt='):
+            cols = common.apply_bdtbased(cols,wp,lumi,anti=True,ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
+        elif selection.startswith('antiloosebdt='):
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,ddt_map_file=common.DDT_FILE_BDTBASED)
+        elif selection.startswith('rtantiloosebdt='):
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
