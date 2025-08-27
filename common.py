@@ -1112,8 +1112,8 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     PT_edges = np.array(PT_edges)
     RT_edges = np.array(RT_edges)
 
-    # Applying a smearing on the DDT map
-    var_map_smooth = gaussian_filter(var_map, smear)
+    # Applying a smearing on the DDT map. Explicitly disabling the smearing on the RT axis
+    var_map_smooth = gaussian_filter(var_map, (smear, smear, 0.0))
 
     # Bin index lookup with digitize. Using minus 2 in clip becase we are no
     # longer applying the ddt_window cut, so there will be overflow entries.
@@ -1235,7 +1235,7 @@ def apply_anticutbased(cols, cul_val=0.09):
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def cutbased_ddt_not_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
+def cutbased_ddt_no_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
     # Get features necessary to apply the DDT
     mT = cols.to_numpy(['mt']).ravel()
@@ -1249,13 +1249,13 @@ def cutbased_ddt_not_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xroo
 
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
-    ddt_val = cutbased_ddt_not_rt_cut(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
+    ddt_val = cutbased_ddt_no_rt_cut(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
-def apply_rtantiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
-    ddt_val = cutbased_ddt_not_rt_cut(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
+def apply_antiloosertcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    ddt_val = cutbased_ddt_no_rt_cut(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
@@ -1283,12 +1283,12 @@ def split_bdt(sel):
 
 def calc_bdt_scores(X, model_file=bdt_model_file):
     import xgboost as xgb
-
     # Load the model and get the predictions
     xgb_model = xgb.XGBClassifier()
     xgb_model.load_model(model_file)
     with time_and_log(f'Calculating xgboost scores for {bdt_model_file}...'):
         score = xgb_model.predict_proba(X)[:,1]
+    del xgb_model
     return score
 
 
