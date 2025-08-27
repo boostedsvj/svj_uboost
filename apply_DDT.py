@@ -23,6 +23,7 @@ from scipy.ndimage import gaussian_filter
 import pandas as pd
 import xgboost as xgb
 import mplhep as hep
+import tqdm
 hep.style.use("CMS") # CMS plot style
 import svj_ntuple_processing as svj
 import seutils as se
@@ -92,6 +93,7 @@ def save_plot(plt, plt_name, flag_tight_layout=True, **kwargs):
     Save the plots, save some lines of code
     '''
     if flag_tight_layout == True: plt.tight_layout()
+    print(f"Saving plot {plt_name}")
     plt.savefig(f'plots/{plt_name}.png', **kwargs)
     plt.savefig(f'plots/{plt_name}.pdf', **kwargs)
 
@@ -221,8 +223,8 @@ def main():
         ana_label = ana_type
         if rt_ddt_file is not None:
             ana_label += 'withRTDDT'
-        for cut_val, (var_map, MT_PT_edges, PT_edges, RT_edges) in var_dict.items():
-            var_map =  np.array(var_map)
+
+        def plot_single(img_array, MT_PT_edges, PT_edges, plt_name):
             MT_PT_edges = np.array(MT_PT_edges)
             PT_edges = np.array(PT_edges)
             fig, ax = simple_fig()
@@ -232,15 +234,19 @@ def main():
                 'origin':'lower',
                 'cmap': 'viridis',
             }
-
-            im = ax.imshow(gaussian_filter(var_map[:,:,1], smear).T, **im_show_kwargs)
+            im = ax.imshow(img_array, **im_show_kwargs)
             ax.figure.colorbar(im, label='DDT Map value')
             ax.set_xlabel('$\\frac{m_{\\mathrm{T}}}{p_{\\mathrm{T}}}$')
             ax.set_ylabel('$p_{\\mathrm{T}}$ [GeV]')
-            save_plot(plt, f'2D_map_{ana_label}_{cut_val}')
+            save_plot(plt, plt_name)
+            plt.close()
+
+        for cut_val, (var_map, MT_PT_edges, PT_edges, RT_edges) in var_dict.items():
+            var_map =  np.array(var_map)
+            plot_single(var_map[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
+            plot_single(gaussian_filter(var_map[:,:,1], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
-                ax.imshow(gaussian_filter(var_map[:,:,0], smear).T, **im_show_kwargs)
-                save_plot(plt, f'2D_map_{ana_label}_{cut_val}_antiRT')
+                plot_single(gaussian_filter(var_map[:,:,0], smear).T, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
     if 'bkg_scores_mt' in plots :
@@ -250,7 +256,8 @@ def main():
         ana_label = ana_type
         if rt_ddt_file is not None:
             ana_label += 'withRTDDT'
-        primary_var_ddt = { cut_val: calculate_varDDT(mT, pT, rt_mask, primary_var, cut_val, ddt_map_file, smear=smear) for cut_val in var_cuts}
+        print("Computing var DDTs")
+        primary_var_ddt = { cut_val: calculate_varDDT(mT, pT, rt_mask, primary_var, cut_val, ddt_map_file, smear=smear) for cut_val in tqdm.tqdm(var_cuts)}
 
         # Plot histograms for the DDT scores for different BDT cuts
         if verbosity > 0 : print("Making background plots")
