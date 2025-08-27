@@ -1149,7 +1149,7 @@ SELECTION_RT_SIGNAL_REGION = 1.18
 # DDT selection for RT
 SELECTION_RTDDT_SIGNAL_REGION = 1.20
 RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
-RT_DDT_FILE = 'models/rt_ddt_map_ANv6.json'
+RT_DDT_FILE = 'models/rt_ddt_map_ANv6_3d.json'
 
 def apply_rt_signalregion(cols):
     cols = cols.select(cols.arrays['rt'] > SELECTION_RT_SIGNAL_REGION)
@@ -1172,8 +1172,8 @@ def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PA
 
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
-DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6.json'
-DDT_FILE_CUTBASED_RT_DDT = 'models/cutbased_ddt_map_withRT_ANv6.json'
+DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6_3d.json'
+DDT_FILE_CUTBASED_RT_DDT = 'models/cutbased_ddt_map_withRT_ANv6_3d.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
@@ -1293,8 +1293,8 @@ def calc_bdt_scores(X, model_file=bdt_model_file):
 
 
 DDT_PATH_BDTBASED='root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/BDT_based/'
-DDT_FILE_BDTBASED='models/bdt_ddt_map_ANv6.json'
-DDT_FILE_BDTBASED_RT_DDT='models/bdt_ddt_withRT_ANv6.json'
+DDT_FILE_BDTBASED='models/bdt_ddt_map_ANv6_3d.json'
+DDT_FILE_BDTBASED_RT_DDT='models/bdt_ddt_withRT_ANv6_3d.json'
 
 def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_file=DDT_FILE_BDTBASED, xrootd_url=DDT_PATH_BDTBASED):
     check_if_model_exists(ddt_map_file, xrootd_url)
