@@ -1223,16 +1223,21 @@ def apply_cutbasedCRloose(cols):
 def apply_anticutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion(cols)
     ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
-
-    # Now cut on the DDT BELOW 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
-def apply_anticutbased(cols, cul_val=0.09):
+def apply_anticutbased(cols, cut_val=0.09):
     cols = apply_rt_signalregion(cols)
     cols = cols.select(cols.arrays['ecfm2b1'] < cut_val)
     cols.cutflow['anticutbased'] = len(cols)
+    return cols
+
+def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+    cols = apply_rt_signalregion_ddt(cols)
+    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val < 0.0) # mask for the selection
+    cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
 def cutbased_ddt_no_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):

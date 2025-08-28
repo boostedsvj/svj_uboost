@@ -146,6 +146,8 @@ def build_histogram(args=None):
             cols = common.apply_anticutbased(cols)
         elif selection.startswith('anticutbased_ddt='):
             cols = common.apply_anticutbased_ddt(cols,lumi,cut_val=wp)
+        elif selection.startswith('antirtcutbased_ddt='):
+            cols = common.applyantirtcutbased_ddt(cols,lumi,cut_val=wp)
         elif selection=='antiloosecutbased':
             cols = common.apply_antiloosecutbased(cols)
         elif selection.startswith('antiloosecutbased_ddt='):
