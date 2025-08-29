@@ -474,7 +474,7 @@ def main():
         best_bdt_cuts = best_bdt_cuts[sort_indices]
 
         # Find optimal cut
-        mask = (best_bdt_cuts[:,0] >= 200) & (best_bdt_cuts[:,0] <= 400)
+        mask = (best_bdt_cuts[:,0] >= 200) & (best_bdt_cuts[:,0] <= 400) if ana_type == "BDT-based" else np.ones_like(best_bdt_cuts[:,0], dtype=bool)
         selected_values = best_bdt_cuts[mask, 1]
         average = np.mean(selected_values)
         optimal_bdt_cut = min(var_cuts, key=lambda x: abs(x - average)) # Finding the nearest value in ana_variant['cut_values'] to the calculated average
