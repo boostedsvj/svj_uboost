@@ -63,7 +63,7 @@ def parse_arguments():
 
     # Allowed plots: 2D DDT maps, Background Scores vs MT, FOM significance,
     #                Signal mt spectrums for one BDT working point,  one signal mt spectrum for many BDT working points
-    allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'fom_significance', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
+    allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'fom_significance', 'fom_mt_scan', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
     parser.add_argument('--plot', nargs='*', type=str, default=[], choices=allowed_plots, help='Plots to make')
 
     # Add verbosity level argument
@@ -189,7 +189,7 @@ def main():
             "features": read_training_features(model_file) + features_common,
             "inputs_to_primary": lambda x:  calc_bdt_scores(x, model_file=model_file),
             "primary_var_label": "BDT $>$",
-            "default_cut_vals": [0.0, 0.1, 0.2, 0.3, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.82, 0.85, 0.87, 0.9, 0.92, 0.95],
+            "default_cut_vals": [0.1, 0.2, 0.3, 0.32, 0.35, 0.37, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.9],
             "smear": 1.0,
         }
     }
@@ -492,6 +492,67 @@ def main():
         save_plot(plt, f'best_{ana_label}_cuts', flag_tight_layout=False, bbox_inches='tight')
         plt.close()
 
+    # _____________________________________________
+    # Create Significance Plots
+    if 'fom_mt_scan' in plots :
+        files_by_mass = { # Group files by mass point
+            mass: [
+                f for f in expand_wildcards([sig_files])
+                if f'mMed-{mass}' in f and 'mDark-10' in f and 'rinv-0p3' in f
+            ]
+            for mass in [200,300,400]
+        }
+        # Prepare a figure
+        fig = plt.figure(figsize=(10, 10))
+        spec = fig.add_gridspec(ncols=1,
+                          nrows=2,
+                          width_ratios=[1],
+                          height_ratios=[1.6, 1])
+        ax_upper = fig.add_subplot(spec[0, 0])
+        ax_lower = fig.add_subplot(spec[1, 0], sharex=ax_upper)
+        plt.setp(ax_upper.get_xticklabels(), visible=False)
+
+        mT_bins = np.linspace(180, 650, 48)
+        ana_label = ana_type
+        if rt_ddt_file is not None:
+            ana_label += 'withRTDDT'
+
+        def _get_ddt_yield(mT, pT, rT, var, weight, cut_val=None, mz=None):
+            # Getting the histogram used to draw plots
+            rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file)
+            score_mask = calculate_varDDT(mT, pT, rt_mask, var, cut_val, ddt_map_file, smear=smear) > 0 if cut_val is not None else np.ones_like(mT,dtype=bool)
+            SR_mask = score_mask & rt_mask
+            mt_mask = (mT > (mz - 100)) & (mT < (mz + 100)) if mz is not None else np.ones_like(mT, dtype=bool)
+            mt_fill = mT[SR_mask & mt_mask]
+            weight_fill = weight[SR_mask & mt_mask]
+            return np.histogram(mt_fill, bins=mT_bins, weights=weight_fill)[0]
+
+        for cut_val, ls, alpha in zip([None] + var_cuts, ['solid', 'dashed', 'dashdot', 'dotted'], [1.0,0.8,0.5,0.3]):
+            bkg_hist = _get_ddt_yield(mT, pT, rT, primary_var, bkg_weight, cut_val=cut_val, mz=None)
+            ax_upper.step(mT_bins[:-1], bkg_hist*100, color='black', ls=ls)
+            ax_lower.plot([], [], color='gray', ls=ls, label=f"Cut value: {cut_val}")
+            if cut_val is None:
+                ax_upper.plot([], [], color='black', ls='solid', label="Background (x100)")
+            for (mz, mz_files), color in zip(files_by_mass.items(), plt.rcParams['axes.prop_cycle'].by_key()['color']):
+                s = f'bsvj_{mz:d}_10_0.3'
+                sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(mz_files, ana_variant['features'])
+                if verbosity > 0 : print("M(Z') = ", mz, " Events: ", len(sig_X), " weights: ", sig_weight)
+                sig_primary_var = ana_variant["inputs_to_primary"](sig_X)
+                sig_hist = _get_ddt_yield(sig_mT, sig_pT, sig_rT, sig_primary_var, sig_weight, cut_val=cut_val, mz=mz)
+                ax_upper.step(mT_bins[:-1], sig_hist, color=color, ls=ls)
+                ax_lower.step(mT_bins[:-1], FOM(sig_hist,bkg_hist), color=color, ls=ls)
+                if cut_val is None:
+                    ax_upper.plot([],[],color=color, ls='solid', label=f"$m_Z'$ = {mz} [GeV]")
+
+        ax_upper.set_yscale('log')
+        ax_upper.set_ylabel('Number of events')
+        ax_lower.set_xlabel('$m_{T}$ [GeV]')
+        ax_lower.set_ylabel("FOM per-bin-value")
+        ax_upper.legend()
+        ax_lower.legend()
+        # cannot use layout_tight, will cause saving errors
+        save_plot(plt, f'FOM_mT_scan_{ana_label}')
+        plt.close()
 
     # _____________________________________________
     # BDT only section
