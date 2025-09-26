@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 import tqdm
 import multiprocessing as mp
+import multiprocessing.pool
 from cycler import cycler
 
 np.random.seed(1001)
@@ -334,6 +335,34 @@ def quick_subplots(*args, **kwargs):
         except Exception:
             pass
 
+def _mp_count_compute(factor=None, max_thread=None):
+    # Simple switch for how many workers we should open in a pool
+    if factor is None:
+        factor = 0.75 if mp.cpu_count() < 16 else 0.5
+    if max_thread is None:
+        max_thread = mp.cpu_count()
+    return int(min([mp.cpu_count() * factor , max_thread]))
+
+@contextmanager
+def mp_pool(factor=None, max_thread=None):
+    try:
+        n_threads = _mp_count_compute(factor, max_thread)
+        logger.info(f"Creating mp.Pool with {n_threads} workers")
+        yield mp.Pool(n_threads)
+    finally:
+        pass
+
+
+@contextmanager
+def mp_thread_pool(factor=None, max_thread=None):
+    # Threading is required for if the function call uses variables that are
+    # defined outside the function scope
+    try:
+        n_threads = _mp_count_compute(factor, max_thread)
+        print(f"Creating thread pool with {n_threads} threads")
+        yield mp.pool.ThreadPool(n_threads)
+    finally:
+        pass
 
 #__________________________________________________
 # Automatic cross section getter
@@ -1034,7 +1063,7 @@ def varmap(mt, pt, rt_sel, var, weight, percent, cut_val):
             return weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent)
         return 0
 
-    with mp.pool.ThreadPool(mp.cpu_count() * 3 //4) as p:
+    with mp_thread_pool() as p:
         bin_list = [(i,j,k) for i in range(len(MT_PT_edges)-1) for j in range(len(PT_edges)-1) for k in [0,1]]
         result_list = list(tqdm.tqdm(p.imap(_calc_bin, bin_list), desc="DDT bin", total=len(bin_list)))
         for (i,j,k), result in zip(bin_list, result_list):
