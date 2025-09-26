@@ -290,10 +290,11 @@ def build_all_histograms():
     skimdir = common.pull_arg('skimdir', type=str).skimdir
 
     skims = expand_wildcards(skimdir)
-    for skim in skims:
-        for hist_var in hist_var_list:
-            change_bin_width(hist_var)
-            build_histogram((selection, hist_var, None, None, fullyear, skim))
+    for hist_var in hist_var_list:
+        change_bin_width(hist_var)
+        with common.mp_pool() as p:
+            args =  [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
+            p.map(build_histogram, args)
 
 @scripter
 def merge_histograms():
@@ -636,8 +637,14 @@ def smooth_shapes():
     mtmin = common.pull_arg('--mtmin', type=float, default=None).mtmin
     mtmax = common.pull_arg('--mtmax', type=float, default=None).mtmax
     norm = not common.pull_arg('--unnorm', default=False, action="store_true", help="fit unnormalized shape").unnorm
-    json_file = common.pull_arg('jsonfile', type=str).jsonfile
+    json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
+    with common.mp_pool() as p:
+        args = [(span_val, span_min, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        p.starmap(smooth_shape_single, args)
+
+
+def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
     h_default = mths[default]
@@ -734,6 +741,7 @@ def smooth_shapes():
     if save_all or save:
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
+
 
 @scripter
 def plot_smooth():
