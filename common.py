@@ -1213,7 +1213,7 @@ def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     # For this function, we are assuming the RT signal region is applied, a separation method
     # Will need to be computed for the antiloose control region
     rt_mask = np.ones_like(mT, dtype=bool)
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=1.0)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=0.5)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1278,7 +1278,7 @@ def cutbased_ddt_no_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xroot
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
     rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=1.0)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=0.5)
     return ddt_val
 
 
@@ -1342,7 +1342,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
     mT = cols.to_numpy(['mt']).ravel()
     pT = cols.to_numpy(['pt']).ravel()
     rT_mask = np.ones_like(mT, dtype=bool)
-    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=1.0)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=0.5)
 
     if anti:
         cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
@@ -1365,7 +1365,7 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     rT = cols.to_numpy(["rt"]).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
     rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
-    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=1.0)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=0.5)
 
     cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
     cols.cutflow['loose_ddt(antibdt)'] = len(cols)
