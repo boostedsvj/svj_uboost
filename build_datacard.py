@@ -292,7 +292,7 @@ def build_all_histograms():
     skims = expand_wildcards(skimdir)
     for hist_var in hist_var_list:
         change_bin_width(hist_var)
-        with common.mp_pool() as p:
+        with common.mp_pool(factor=1, max_thread=256) as p: # This part is significantly IO bound, we use as much resources as physically allowed
             args =  [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
             p.map(build_histogram, args)
 
@@ -617,8 +617,9 @@ def do_loess(hist,span,do_gcv=False):
     # 1sigma interval
     try:
         pred, conf_int, gcv = loess(x, y, errs, deg=2, alpha=0.683, span=span)
-    except np.linalg.LinAlgError:
+    except np.linalg.LinAlgError as err:
         gcv = 1e10
+        print(err)
     if do_gcv:
         return gcv
     else:
