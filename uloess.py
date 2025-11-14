@@ -21,10 +21,9 @@ def wls(i, x, y, e, w, deg):
     # polyfit convention: coef is sorted with highest power first
     # form A matrix (which corresponds to gradient of parameters for least squares fit) following that convention
     # include weights following weighted least squares convention
-    X = np.vander(x, deg+1)
+    X = np.vander((x-np.mean(x[w>0]))/(2*(np.max(x)-np.min(x))), deg+1)
     W = np.diag(weights)
-    M = np.array(X.T.dot(W).dot(X), dtype=np.float32)
-    L = X.dot(np.linalg.inv(M)).dot(X.T.dot(W)) # smoothing matrix
+    L = X.dot(np.linalg.inv(X.T.dot(W).dot(X))).dot(X.T.dot(W)) # smoothing matrix
     Y = L.dot(y) # predictions
     y_pred = Y[i]
 #    if debug_print(i): np.set_printoptions(threshold=np.inf)
