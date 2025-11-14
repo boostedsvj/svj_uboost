@@ -251,6 +251,7 @@ def build_histogram(args=None):
         sigma_pdf = np.std(pdf_weights, axis=1)
         pdfw_up = (mu_pdf+sigma_pdf) / cen_columns.metadata['pdfw_norm_up']
         pdfw_down = (mu_pdf-sigma_pdf) / cen_columns.metadata['pdfw_norm_down']
+        pdfw_down = np.clip(pdfw_down, a_min=0, a_max=None)
         hist_variants['pdf_up'] = VarHistogram(cen_columns, w*pdfw_up)
         hist_variants['pdf_down'] = VarHistogram(cen_columns, w*pdfw_down)
 
