@@ -694,14 +694,13 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
             gcvs = np.array([do_loess(hist, span, do_gcv=True) for span in spans])
             span_val = spans[np.argmin(gcvs)]
             if debug: print('\n'.join(['{} {}'.format(span,gcv) for span,gcv in zip(spans,gcvs)]))
-            print("Optimal span ({}): {}".format(var,span_val))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
 
         pred, conf = do_loess(hist,span=span_val)
 
         hsmooth = hist.copy()
-        hsmooth.vals = pred
+        hsmooth.vals = np.where((hist.vals == 0) & (pred < 0), 0.0, pred)
         hsmooth.errs = conf[1] - pred
 
         # cuts applied *after* interpolation
