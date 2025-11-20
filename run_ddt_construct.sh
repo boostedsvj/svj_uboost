@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # Common items
-BKG_ALL_FILES="root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz"
-BKG_QCD_FILES="root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/QCD*.npz"
-SIG_ALL_FILES="root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz"
+FILE_PRE="root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd"
+# FILE_PRE='/work/ychen/svj_fit/skims_20241030_hadd'
+BKG_ALL_FILES="${FILE_PRE}/Summer20UL*/*.npz"
+BKG_QCD_FILES="${FILE_PRE}/Summer20UL*/QCD*.npz"
+SIG_ALL_FILES="${FILE_PRE}/Private*/*.npz"
 
 # Running the original cut-based selection (No RT DDT)
 # rm ./models/cutbased_ddt_map_ANv6_3d.json
