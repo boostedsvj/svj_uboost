@@ -25,10 +25,7 @@ done
 actual_sels=()
 for sel in ${sels[@]}; do
     # define all regions for this selection
-    actual_sels+=(${sel} anti${sel})
-    if [[ "$sel" == "cut"* ]]; then
-        actual_sels+=(antiloose${sel})
-    fi
+    actual_sels+=(${sel} anti${sel} antiloose${sel})
 done
 
 set -x
