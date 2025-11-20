@@ -293,7 +293,7 @@ def build_all_histograms():
     skims = expand_wildcards(skimdir)
     for hist_var in hist_var_list:
         change_bin_width(hist_var)
-        with common.mp_pool(factor=1, max_thread=256) as p: # This part is significantly IO bound, we use as much resources as physically allowed
+        with common.mp_pool() as p:
             args =  [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
             p.map(build_histogram, args)
 
@@ -683,7 +683,6 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
         hist = mths[var]
         hyield = hist.vals.sum()
         common.logger.info(f'{var} integral: {hyield}')
-
         meta = hist.metadata
 
         # normalize shape to unit area, then scale prediction by original yield
