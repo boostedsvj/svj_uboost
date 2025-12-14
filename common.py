@@ -1180,6 +1180,9 @@ SELECTION_RTDDT_SIGNAL_REGION = 1.20
 RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
 RT_DDT_FILE = 'models/rt_ddt_map_ANv6_3d.json'
 
+RT_DDT_SMEAR = 0.2
+NO_RT_DDT_SMEAR = 0.5
+
 def apply_rt_signalregion(cols):
     cols = cols.select(cols.arrays['rt'] > SELECTION_RT_SIGNAL_REGION)
     cols.cutflow['rt_signalregion'] = len(cols)
@@ -1191,7 +1194,7 @@ def _get_rt_ddt_val(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(['rt']).ravel()
     mask = np.ones_like(mT, dtype=bool)
-    return calculate_varDDT(mT, pT, mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_map, smear=0.2)
+    return calculate_varDDT(mT, pT, mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_map, smear=RT_DDT_SMEAR)
 
 def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
     ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
@@ -1213,7 +1216,7 @@ def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     # For this function, we are assuming the RT signal region is applied, a separation method
     # Will need to be computed for the antiloose control region
     rt_mask = np.ones_like(mT, dtype=bool)
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=0.5)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=NO_RT_DDT_SMEAR)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1269,7 +1272,8 @@ def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
-def cutbased_ddt_no_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xrootd_url):
+def _calc_rtcutbased_ddt_val(cols, lumi, cut_val, rt_ddt_file, rt_cut_val, ddt_map_file, xrootd_url):
+    # Calculating the cutbased DDT value, if the RT DDT file is provided, we we will compute the results with the double DDT method
     check_if_model_exists(ddt_map_file, xrootd_url)
     # Get features necessary to apply the DDT
     mT = cols.to_numpy(['mt']).ravel()
@@ -1277,19 +1281,21 @@ def cutbased_ddt_no_rt_cut(cols, lumi, cut_val, rt_ddt_file, ddt_map_file, xroot
     rT = cols.to_numpy(['rt']).ravel()
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
-    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
-    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=0.2)
+    rt_mask = (rT > rt_cut_val)
+    if rt_ddt_file is not None:
+        rt_mask = calculate_varDDT(mT, pT, t_mask, rT, rt_cut_val, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=RT_DDT_SMEAR)
     return ddt_val
 
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
-    ddt_val = cutbased_ddt_no_rt_cut(cols, lumi, cut_val, None, ddt_map_file, xrootd_url)
+    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, None, SELECTION_RT_SIGNAL_REGION, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
 def apply_antiloosertcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
-    ddt_val = cutbased_ddt_no_rt_cut(cols, lumi, cut_val, RT_DDT_FILE, ddt_map_file, xrootd_url)
+    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
@@ -1334,7 +1340,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
 
-    cols = apply_rt_signalregion(cols) if ddt_map_file == DDT_FILE_BDTBASED else apply_rt_signalregion_ddt(cols)
+    cols = apply_rt_signalregion(cols) if "_withRT_" not in ddt_map_file else apply_rt_signalregion_ddt(cols)
     if len(cols)==0:
         return cols
     X = cols.to_numpy(read_training_features(model_file))
@@ -1342,7 +1348,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
     mT = cols.to_numpy(['mt']).ravel()
     pT = cols.to_numpy(['pt']).ravel()
     rT_mask = np.ones_like(mT, dtype=bool)
-    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=0.2)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=RT_DDT_SMEAR)
 
     if anti:
         cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
@@ -1353,6 +1359,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
     return cols
 
 def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_PATH_BDTBASED,xrootd_url=DDT_PATH_BDTBASED):
+    # Running the BDT calculation. If the RT_DDT files is provided, the double DDT method will be used
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
 
@@ -1364,8 +1371,10 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     pT = cols.to_numpy(['pt']).ravel()
     rT = cols.to_numpy(["rt"]).ravel()
     t_mask = np.ones_like(mT, dtype=bool)
-    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION) if rt_ddt_file is None else calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=0.2) > 0.0
-    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=0.2)
+    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION)
+    if rt_ddt_file is not None:
+        rt_mask = calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
+    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=RT_DDT_SMEAR)
 
     cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
     cols.cutflow['loose_ddt(antibdt)'] = len(cols)
