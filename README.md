@@ -137,8 +137,8 @@ using the BDT, run the following commands:
 
 ```bash
 # Create the BDT on QCD background and plot 2D maps
-python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/QCD*.npz" --plot 2D_DDT_map fom_significance
-# Determining the optimal cut value by comparing the full background sample and the comparing this with the signal sample
+python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/QCD*.npz" --plot 2D_DDT_map
+# Determining the optimal cut value by computing the selection event count of the full background sample and then comparing with signal samples
 python apply_DDT.py --ddt_map_file models/<new_file_name>.json --bkg_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Summer20UL*/*.npz" --sig_files "root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/skims_20241030_hadd/Private*/*.npz" --plot fom_significance
 # Plot mt score comparisons to check for MT spectrum sculpting
 python apply_DDT.py --plot bkg_scores_mt sig_mt_single_BDT one_sig_mt_many_bdt --bkg_files "data/bkg_20241030/Summer20UL*/*.npz" --bdt_cuts 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9
@@ -154,9 +154,9 @@ python apply_DDT.py --analysis_type cut-based --ddt_map_file models/<new_file_na
 ```
 
 Because we need a larger control region for the ralphabet method, a loose
-control region is defined by relaxing the RT requirements. We will need to
-compute the RT selection with a DDT-modified RT selection. To compute the
-RT-DDT map, run the following commands:
+control region is defined by relaxing the RT requirements. Instead of directly
+performing event selection on the event RT value, an additional DDT map is
+computed for RT. To compute this RT-DDT map, run the following commands:
 
 ```bash
 # Creating the the RT-DDT map using the full background sample, and scanning for an optimal cut point
