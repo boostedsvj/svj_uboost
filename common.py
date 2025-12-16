@@ -8,6 +8,9 @@ import requests
 import numpy as np
 from datetime import datetime
 import json
+import tqdm
+import multiprocessing as mp
+import multiprocessing.pool
 from cycler import cycler
 
 np.random.seed(1001)
@@ -332,6 +335,34 @@ def quick_subplots(*args, **kwargs):
         except Exception:
             pass
 
+def _mp_count_compute(factor=None, max_thread=None):
+    # Simple switch for how many workers we should open in a pool
+    if factor is None:
+        factor = 0.75 if mp.cpu_count() < 16 else 0.5
+    if max_thread is None:
+        max_thread = mp.cpu_count()
+    return int(min([mp.cpu_count() * factor , max_thread]))
+
+@contextmanager
+def mp_pool(factor=None, max_thread=None):
+    try:
+        n_threads = _mp_count_compute(factor, max_thread)
+        logger.info(f"Creating mp.Pool with {n_threads} workers")
+        yield mp.Pool(n_threads)
+    finally:
+        pass
+
+
+@contextmanager
+def mp_thread_pool(factor=None, max_thread=None):
+    # Threading is required for if the function call uses variables that are
+    # defined outside the function scope
+    try:
+        n_threads = _mp_count_compute(factor, max_thread)
+        print(f"Creating thread pool with {n_threads} threads")
+        yield mp.pool.ThreadPool(n_threads)
+    finally:
+        pass
 
 #__________________________________________________
 # Automatic cross section getter
@@ -960,7 +991,7 @@ def read_training_features(model_file):
         model = json.load(f)
         return model['features']
 
-def rhoddt_windowcuts(mt, pt, rho):
+def ddt_windowcuts(mt, pt):
     '''
     Basically a tool to constantly check the kinematics during the DDT processes
     '''
@@ -986,54 +1017,59 @@ def weighted_percentile(x, w, percent):
         return sorted_x[0]
 
     # Getting the points where the cumulative sum pass above or below the percentile of interest
-    lower_val = np.max(sorted_x[sorted_c <= percent])
-    upper_val = np.min(sorted_x[sorted_c >= percent])
+    lower_val = sorted_x[sorted_c <= percent][-1]
+    upper_val = sorted_x[sorted_c >= percent][0]
 
-    lower_sum = np.max(sorted_c[sorted_c <= percent])
-    upper_sum = np.min(sorted_c[sorted_c >= percent])
+    lower_sum = sorted_c[sorted_c <= percent][-1]
+    upper_sum = sorted_c[sorted_c >= percent][0]
 
     # Getting the interpolation weight if the percentile does not land on a single number
     int_w = 0.5 if upper_sum == lower_sum else (percent - lower_sum)/(upper_sum - lower_sum)
 
     return upper_val *int_w + lower_val * (1-int_w)
 
-def varmap(mt, pt, rho, var, weight, percent, cut_val):
+def varmap(mt, pt, rt_sel, var, weight, percent, cut_val):
     '''
-    2D map for DDT, now defined in (mt, pt) space instead of (rho, pt).
-    Decorrelates the tagger variable with respect to mt using a 2D (mt, pt) map.
+    3D map for DDT, defined in (mt/pt, pt, rt) space. The rt array in this case should be a boolean array indicating
+    if the array passed or failed the RT selection.
     '''
 
     # Apply the rho-ddt window cuts to the data (still useful for pt/mt range)
-    cuts = rhoddt_windowcuts(mt, pt, rho)
+    cuts = ddt_windowcuts(mt, pt)
     mt_pt = mt/pt
+    NBINS = 73
 
     # Create a 2D histogram of mt and pt, weighted by event weights
-    C, MT_PT_edges, PT_edges = np.histogram2d(mt_pt[cuts], pt[cuts], bins=73, weights=weight[cuts])
+    C, (MT_PT_edges, PT_edges, RT_edges) = np.histogramdd(
+        np.array([mt_pt[cuts], pt[cuts], rt_sel[cuts]]).transpose(),
+        bins=(NBINS, NBINS, [0,1,2]),
+        weights=weight[cuts]
+    )
 
     # Initialize the variable map
-    w, h = 74, 74
-    VAR_map = [[0 for x in range(h)] for y in range(w)]
+    VAR_map = np.zeros_like(C)
 
     # Get data arrays for events passing the cuts
     VAR = var[cuts]
     WEIGHT = weight[cuts]
     mt_pt_bin_idx = np.digitize(mt_pt[cuts], MT_PT_edges) - 1
     pt_bin_idx = np.digitize(pt[cuts], PT_edges) - 1
+    rt_bin_idx = np.digitize(rt_sel[cuts], RT_edges) -1
 
-    # Loop over mt and pt bins
-    for i in range(len(MT_PT_edges)-1):
-        for j in range(len(PT_edges)-1):
-            CUT = (mt_pt_bin_idx == i) & (pt_bin_idx == j)
+    def _calc_bin(bin_idx):
+        i,j,k = bin_idx
+        BIN_CUT = (mt_pt_bin_idx == i) & (pt_bin_idx == j) & (rt_bin_idx == k)
+        if np.sum(BIN_CUT) > 0:
+            return weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent)
+        return 0
 
-            # If there is data in this bin, calculate the percentile of the variable
-            if len(VAR[CUT]) > 0:
-                VAR_map[i][j] = weighted_percentile(VAR[CUT], WEIGHT[CUT], 100 - percent)
+    with mp_thread_pool() as p:
+        bin_list = [(i,j,k) for i in range(len(MT_PT_edges)-1) for j in range(len(PT_edges)-1) for k in [0,1]]
+        result_list = list(tqdm.tqdm(p.imap(_calc_bin, bin_list), desc="DDT bin", total=len(bin_list)))
+        for (i,j,k), result in zip(bin_list, result_list):
+            VAR_map[i][j][k] = result
 
-    # Apply smoothing (you can replace this with adaptive smoothing if you like)
-    VAR_map_smooth = gaussian_filter(VAR_map, sigma=1.0)
-
-    # Return smoothed map and the new mt and pt bin edges
-    return VAR_map_smooth, MT_PT_edges, PT_edges
+    return VAR_map, MT_PT_edges, PT_edges, RT_edges
 
 
 # Class that converts numpy arrays into list so they can be easily stored in json files
@@ -1044,47 +1080,43 @@ class NumpyArrayEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NumpyArrayEncoder, self).default(obj)
 
-def create_DDT_map_dict(mt, pt, rho, var, weight, percents, cut_vals, ddt_name):
+def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_name):
     '''
     Creates a dictionary of DDT 2D maps for a range of cut_vals and background efficiencies (percents).
-    Each DDT map is a 2D array of tagger thresholds binned in (mt, pt) space,
+    Each DDT map is a 3D array of tagger thresholds binned in (mt/pt, pt, rt) space, where RT is a boolean array
+    indicating whether the events passes the RT selection of interest
     smoothed and stored along with the corresponding bin edges.
 
     Inputs:
-    - mt, pt
+    - mt, pt (continuous event variables)
+    - rt_sel: boolean selection of whether the event passes the RT selection of interest
     - var: the tagger variable (e.g. BDT score)
     - weight: event weights
     - percents: list of background efficiencies (e.g. [10, 20, 30])
     - cut_vals: corresponding working point names (e.g. [0.1, 0.2, 0.3])
     - ddt_name: output filename for the JSON dictionary
     '''
-
-    # Apply kinematic window cuts (still uses rho for now)
-    cuts = rhoddt_windowcuts(mt, pt, rho)
+    cuts = ddt_windowcuts(mt, pt)
 
     var_dict = {}
 
     for cut_val, percent in zip(cut_vals, percents):
         print(f"Creating DDT 2D map for cut value {cut_val}, efficiency {percent}%")
+        var_map, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
+        var_dict[str(cut_val)] = (var_map.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
 
-        # Build the DDT map in (mt, pt) space
-        var_map_smooth, MT_PT_edges, PT_edges = varmap(mt, pt, rho, var, weight, percent, cut_val)
-
-        # Store the map and bin edges
-        var_dict[str(cut_val)] = (var_map_smooth.tolist(), MT_PT_edges.tolist(), PT_edges.tolist())
-
-    # Save to file
     if ddt_name is None:
         ddt_name = 'ddt_' + str(var) + '_' + datetime.now().strftime('%Y%m%d') + '.json'
     with open(ddt_name, 'w') as f:
         json.dump(var_dict, f, cls=NumpyArrayEncoder)
 
-def calculate_varDDT(mt, pt, rho, var, cut_val, ddt_name):
+def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     '''
     Applies a DDT transformation to 'var' using a DDT map in (mt, pt) space.
-    
+
     Inputs:
-    - mt, pt
+    - mt, pt (continous event variable)
+    - rt_sel, boolean selection for whether the events pass the RT selection scheme of interest
     - var: tagger variable (e.g. BDT score)
     - cut_val: key in the DDT map dict to use (e.g. 0.1, 0.2)
     - ddt_name: path to JSON file containing the DDT map
@@ -1103,20 +1135,24 @@ def calculate_varDDT(mt, pt, rho, var, cut_val, ddt_name):
         raise KeyError(f"The key {cut_val} does not exist in the dictionary.")
 
     # Get the smoothed map and bin edges
-    var_map_smooth, MT_PT_edges, PT_edges = var_dict[str(cut_val)]
-    var_map_smooth = np.array(var_map_smooth)
+    var_map, MT_PT_edges, PT_edges, RT_edges = var_dict[str(cut_val)]
+    var_map = np.array(var_map)
     MT_PT_edges = np.array(MT_PT_edges)
     PT_edges = np.array(PT_edges)
+    RT_edges = np.array(RT_edges)
 
-    # Apply DDT window cuts (you can update this function later if you drop rho)
-    cuts = rhoddt_windowcuts(mt, pt, rho)
+    # Applying a smearing on the DDT map. Explicitly disabling the smearing on the RT axis
+    var_map_smooth = gaussian_filter(var_map, (smear, smear, 0.0))
 
-    # Bin index lookup with digitize
-    pt_bin = np.clip(np.digitize(pt, PT_edges) - 1, 0, len(PT_edges) - 1)
-    mt_pt_bin = np.clip(np.digitize(mt/pt, MT_PT_edges) - 1, 0, len(MT_PT_edges) - 1)
+    # Bin index lookup with digitize. Using minus 2 in clip becase we are no
+    # longer applying the ddt_window cut, so there will be overflow entries.
+    # Just folding it to the last bin for now
+    pt_bin = np.clip(np.digitize(pt, PT_edges) - 1, 0, len(PT_edges) - 2)
+    mt_pt_bin = np.clip(np.digitize(mt/pt, MT_PT_edges) - 1, 0, len(MT_PT_edges) - 2)
+    rt_bin = np.digitize(rt_sel, RT_edges)-1
 
     # Apply DDT: var - DDT map value at the appropriate bin
-    varDDT = var - var_map_smooth[mt_pt_bin, pt_bin]
+    varDDT = var - var_map_smooth[mt_pt_bin, pt_bin, rt_bin]
 
     return varDDT
 
@@ -1125,12 +1161,7 @@ def apply_hemveto(cols):
     cols.cutflow['hem_veto'] = len(cols)
     return cols
 
-def apply_rt_signalregion(cols):
-    cols = cols.select(cols.arrays['rt'] > 1.18)
-    cols.cutflow['rt_signalregion'] = len(cols)
-    return cols
-
-def check_if_model_exists(model_file, xrootd_url) :
+def check_if_model_exists(model_file, xrootd_url):
     # Check if the file exists locally
     if not os.path.exists(model_file):
         print(f"File {model_file} not found. Downloading from {xrootd_url}...")
@@ -1142,20 +1173,50 @@ def check_if_model_exists(model_file, xrootd_url) :
             raise RuntimeError(f"Error downloading {model_file}: {e}")
             return None
 
+# Direct selection
+SELECTION_RT_SIGNAL_REGION = 1.18
+# DDT selection for RT
+SELECTION_RTDDT_SIGNAL_REGION = 1.20
+RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
+RT_DDT_FILE = 'models/rt_ddt_map_ANv6_3d.json'
+
+RT_DDT_SMEAR = 0.2
+NO_RT_DDT_SMEAR = 0.5
+
+def apply_rt_signalregion(cols):
+    cols = cols.select(cols.arrays['rt'] > SELECTION_RT_SIGNAL_REGION)
+    cols.cutflow['rt_signalregion'] = len(cols)
+    return cols
+
+def _get_rt_ddt_val(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
+    check_if_model_exists(rt_ddt_map, xrootd_url)
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    rT = cols.to_numpy(['rt']).ravel()
+    mask = np.ones_like(mT, dtype=bool)
+    return calculate_varDDT(mT, pT, mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_map, smear=RT_DDT_SMEAR)
+
+def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PATH):
+    ddt_val = _get_rt_ddt_val(cols, rt_ddt_map, xrootd_url)
+    cols = cols.select(ddt_val > 0.0)
+    cols.cutflow['rt_signalregion_ddt'] = len(cols)
+    return cols
+
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
-DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6.json'
+DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6_3d.json'
+DDT_FILE_CUTBASED_RT_DDT = 'models/cutbased_ddt_map_withRT_ANv6_3d.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
     check_if_model_exists(ddt_map_file, xrootd_url)
-
     # Get features necessary to apply the DDT
     mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
     pT = cols.to_numpy(['pt']).ravel()
-    rho = cols.to_numpy(['rho']).ravel()
     ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
-
-    ddt_val = calculate_varDDT(mT, pT, rho, ecfm2b1, cut_val, ddt_map_file)
+    # For this function, we are assuming the RT signal region is applied, a separation method
+    # Will need to be computed for the antiloose control region
+    rt_mask = np.ones_like(mT, dtype=bool)
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=NO_RT_DDT_SMEAR)
     return ddt_val
 
 def apply_cutbased(cols, cut_val=0.09):
@@ -1173,6 +1234,13 @@ def apply_cutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xroo
     cols.cutflow['cutbased_ddt'] = len(cols)
     return cols
 
+def apply_rtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    cols = apply_rt_signalregion_ddt(cols)
+    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val > 0.0)
+    cols.cutflow['cutbased_rt_ddt'] = len(cols)
+    return cols
+
 def apply_cutbasedCR(cols):
     cols = apply_rt_signalregion(cols)
     cols = cols.select(cols.arrays['ecfm2b1'] < 0.032)
@@ -1187,24 +1255,49 @@ def apply_cutbasedCRloose(cols):
 def apply_anticutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion(cols)
     ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
-
-    # Now cut on the DDT BELOW 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
 
-def apply_anticutbased(cols, cul_val=0.09):
+def apply_anticutbased(cols, cut_val=0.09):
     cols = apply_rt_signalregion(cols)
     cols = cols.select(cols.arrays['ecfm2b1'] < cut_val)
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+    cols = apply_rt_signalregion_ddt(cols)
     ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
-
-    # Now cut on the DDT BELOW 0.0 (referring to above the ecfm2b1 cut value)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
+    return cols
+
+def _calc_rtcutbased_ddt_val(cols, lumi, cut_val, rt_ddt_file, rt_cut_val, ddt_map_file, xrootd_url):
+    # Calculating the cutbased DDT value, if the RT DDT file is provided, we we will compute the results with the double DDT method
+    check_if_model_exists(ddt_map_file, xrootd_url)
+    # Get features necessary to apply the DDT
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    rT = cols.to_numpy(['rt']).ravel()
+    ecfm2b1 = cols.to_numpy(['ecfm2b1']).ravel()
+    t_mask = np.ones_like(mT, dtype=bool)
+    rt_mask = (rT > rt_cut_val)
+    if rt_ddt_file is not None:
+        rt_mask = calculate_varDDT(mT, pT, t_mask, rT, rt_cut_val, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
+    ddt_val = calculate_varDDT(mT, pT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=RT_DDT_SMEAR)
+    return ddt_val
+
+
+def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, None, SELECTION_RT_SIGNAL_REGION, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val < 0.0) # mask for the selection
+    cols.cutflow['anticutbased_ddt'] = len(cols)
+    return cols
+
+def apply_antiloosertcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
+    cols = cols.select(ddt_val < 0.0) # mask for the selection
+    cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
 
 def apply_antiloosecutbased(cols, cut_val=0.09):
@@ -1230,52 +1323,61 @@ def split_bdt(sel):
 
 def calc_bdt_scores(X, model_file=bdt_model_file):
     import xgboost as xgb
-
     # Load the model and get the predictions
     xgb_model = xgb.XGBClassifier()
     xgb_model.load_model(model_file)
     with time_and_log(f'Calculating xgboost scores for {bdt_model_file}...'):
         score = xgb_model.predict_proba(X)[:,1]
+    del xgb_model
     return score
 
+
 DDT_PATH_BDTBASED='root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/BDT_based/'
-DDT_FILE_BDTBASED='models/bdt_ddt_AN_v6.json'
+DDT_FILE_BDTBASED='models/bdt_ddt_map_ANv6_3d.json'
+DDT_FILE_BDTBASED_RT_DDT='models/bdt_ddt_withRT_ANv6_3d.json'
 
 def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_file=DDT_FILE_BDTBASED, xrootd_url=DDT_PATH_BDTBASED):
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
-    cols = apply_rt_signalregion(cols)
-    # calc_bdt_scores doesn't like empty inputs
+
+    cols = apply_rt_signalregion(cols) if "_withRT_" not in ddt_map_file else apply_rt_signalregion_ddt(cols)
     if len(cols)==0:
         return cols
-
-    # make sure bdt features match the choosen file
-    bdt_features = read_training_features(model_file)
-
-    # Grab the weights and scores
-    X = []
-    score = {}
-    weight = []
-
-    # Get the features for the bkg samples
-    X = cols.to_numpy(bdt_features)
-    # Calculate bdt scores
+    X = cols.to_numpy(read_training_features(model_file))
     score = calc_bdt_scores(X)
-
-    # Apply the DDT
-    mT = cols.to_numpy(['mt']).ravel() # make one d ... don't ask why it's not
+    mT = cols.to_numpy(['mt']).ravel()
     pT = cols.to_numpy(['pt']).ravel()
-    rho = cols.to_numpy(['rho']).ravel()
-    bdt_ddt_score = calculate_varDDT(mT, pT, rho, score, wp, ddt_map_file)
+    rT_mask = np.ones_like(mT, dtype=bool)
+    bdt_ddt_score = calculate_varDDT(mT, pT, rT_mask, score, wp, ddt_map_file, smear=RT_DDT_SMEAR)
 
-    # Now cut on the DDT above 0.0 (referring to above the given BDT cut value)
-    # or < 0.0 for anti-tag CR
     if anti:
         cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
         cols.cutflow['ddt(antibdt)'] = len(cols)
     else:
         cols = cols.select(bdt_ddt_score > 0.0) # mask for the selection
         cols.cutflow['ddt(bdt)'] = len(cols)
+    return cols
+
+def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_PATH_BDTBASED,xrootd_url=DDT_PATH_BDTBASED):
+    # Running the BDT calculation. If the RT_DDT files is provided, the double DDT method will be used
+    check_if_model_exists(ddt_map_file, xrootd_url)
+    check_if_model_exists(model_file, xrootd_url)
+
+    if len(cols)==0:
+        return cols
+    X = cols.to_numpy(read_training_features(model_file))
+    score = calc_bdt_scores(X)
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    rT = cols.to_numpy(["rt"]).ravel()
+    t_mask = np.ones_like(mT, dtype=bool)
+    rt_mask = (rT > SELECTION_RT_SIGNAL_REGION)
+    if rt_ddt_file is not None:
+        rt_mask = calculate_varDDT(mT, pT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
+    bdt_ddt_score = calculate_varDDT(mT, pT, rt_mask, score, wp, ddt_map_file, smear=RT_DDT_SMEAR)
+
+    cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
+    cols.cutflow['loose_ddt(antibdt)'] = len(cols)
     return cols
 
 class InvalidSelectionException(Exception):

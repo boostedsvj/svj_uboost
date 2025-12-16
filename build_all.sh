@@ -25,10 +25,7 @@ done
 actual_sels=()
 for sel in ${sels[@]}; do
     # define all regions for this selection
-    actual_sels+=(${sel} anti${sel})
-    if [[ "$sel" == "cut"* ]]; then
-        actual_sels+=(antiloose${sel})
-    fi
+    actual_sels+=(${sel} anti${sel} antiloose${sel})
 done
 
 set -x
@@ -49,5 +46,5 @@ for sel in ${actual_sels[@]}; do
     # SIG: build w/ extended mt range for smoothing
     python3 build_datacard.py build_all_histograms ${sel} "${skim_dir}/Private3D*/*pythia8.npz" ${mt_wide} ${mt_bin}
     python3 build_datacard.py merge_histograms ${sel} hists_${hists_date} --cat sig
-    for sig in merged_${hists_date}/SVJ_*_sel-${sel}_*; do python3 build_datacard.py smooth_shapes --optimize 1000 --target central ${mt_reg} ${sig}; done
+    python3 build_datacard.py smooth_shapes --optimize 1000 --target central ${mt_reg} merged_${hists_date}/SVJ_*_sel-${sel}_*
 done

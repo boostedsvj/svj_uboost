@@ -130,9 +130,13 @@ def build_histogram(args=None):
         if selection=='cutbased':
             cols = common.apply_cutbased(cols)
         elif selection.startswith('cutbased_ddt='):
-            cols = common.apply_cutbased_ddt(cols,lumi, cut_val=wp)
+            cols = common.apply_cutbased_ddt(cols, lumi, cut_val=wp)
+        elif selection.startswith('rtcutbased_ddt='):
+            cols = common.apply_rtcutbased_ddt(cols, lumi, cut_val=wp)
         elif selection.startswith('bdt='):
-            cols = common.apply_bdtbased(cols,wp,lumi)
+            cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED)
+        elif selection.startswith('rtbdt='):
+            cols = common.apply_bdtbased(cols, wp, lumi, ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         # control regions
         elif selection=='cutbasedCR':
             cols = common.apply_cutbasedCR(cols)
@@ -142,12 +146,22 @@ def build_histogram(args=None):
             cols = common.apply_anticutbased(cols)
         elif selection.startswith('anticutbased_ddt='):
             cols = common.apply_anticutbased_ddt(cols,lumi,cut_val=wp)
+        elif selection.startswith('antirtcutbased_ddt='):
+            cols = common.apply_antirtcutbased_ddt(cols,lumi,cut_val=wp)
         elif selection=='antiloosecutbased':
             cols = common.apply_antiloosecutbased(cols)
         elif selection.startswith('antiloosecutbased_ddt='):
             cols = common.apply_antiloosecutbased_ddt(cols,lumi, cut_val=wp)
+        elif selection.startswith('antiloosertcutbased_ddt='):
+            cols = common.apply_antiloosertcutbased_ddt(cols,lumi, cut_val=wp)
         elif selection.startswith('antibdt='):
             cols = common.apply_bdtbased(cols,wp,lumi,anti=True)
+        elif selection.startswith('antirtbdt='):
+            cols = common.apply_bdtbased(cols,wp,lumi,anti=True,ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
+        elif selection.startswith('antiloosebdt='):
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,ddt_map_file=common.DDT_FILE_BDTBASED)
+        elif selection.startswith('antiloosertbdt='):
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
@@ -237,6 +251,7 @@ def build_histogram(args=None):
         sigma_pdf = np.std(pdf_weights, axis=1)
         pdfw_up = (mu_pdf+sigma_pdf) / cen_columns.metadata['pdfw_norm_up']
         pdfw_down = (mu_pdf-sigma_pdf) / cen_columns.metadata['pdfw_norm_down']
+        pdfw_down = np.clip(pdfw_down, a_min=0, a_max=None)
         hist_variants['pdf_up'] = VarHistogram(cen_columns, w*pdfw_up)
         hist_variants['pdf_down'] = VarHistogram(cen_columns, w*pdfw_down)
 
@@ -276,10 +291,11 @@ def build_all_histograms():
     skimdir = common.pull_arg('skimdir', type=str).skimdir
 
     skims = expand_wildcards(skimdir)
-    for skim in skims:
-        for hist_var in hist_var_list:
-            change_bin_width(hist_var)
-            build_histogram((selection, hist_var, None, None, fullyear, skim))
+    for hist_var in hist_var_list:
+        change_bin_width(hist_var)
+        with common.mp_pool() as p:
+            args =  [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
+            p.map(build_histogram, args)
 
 @scripter
 def merge_histograms():
@@ -602,8 +618,9 @@ def do_loess(hist,span,do_gcv=False):
     # 1sigma interval
     try:
         pred, conf_int, gcv = loess(x, y, errs, deg=2, alpha=0.683, span=span)
-    except np.linalg.LinAlgError:
+    except np.linalg.LinAlgError as err:
         gcv = 1e10
+        print(err)
     if do_gcv:
         return gcv
     else:
@@ -622,8 +639,14 @@ def smooth_shapes():
     mtmin = common.pull_arg('--mtmin', type=float, default=None).mtmin
     mtmax = common.pull_arg('--mtmax', type=float, default=None).mtmax
     norm = not common.pull_arg('--unnorm', default=False, action="store_true", help="fit unnormalized shape").unnorm
-    json_file = common.pull_arg('jsonfile', type=str).jsonfile
+    json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
+    with common.mp_pool() as p:
+        args = [(span_val, span_min, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        p.starmap(smooth_shape_single, args)
+
+
+def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
     h_default = mths[default]
@@ -660,7 +683,6 @@ def smooth_shapes():
         hist = mths[var]
         hyield = hist.vals.sum()
         common.logger.info(f'{var} integral: {hyield}')
-
         meta = hist.metadata
 
         # normalize shape to unit area, then scale prediction by original yield
@@ -671,14 +693,13 @@ def smooth_shapes():
             gcvs = np.array([do_loess(hist, span, do_gcv=True) for span in spans])
             span_val = spans[np.argmin(gcvs)]
             if debug: print('\n'.join(['{} {}'.format(span,gcv) for span,gcv in zip(spans,gcvs)]))
-            print("Optimal span ({}): {}".format(var,span_val))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
 
         pred, conf = do_loess(hist,span=span_val)
 
         hsmooth = hist.copy()
-        hsmooth.vals = pred
+        hsmooth.vals = np.where((hist.vals == 0) & (pred < 0), 0.0, pred)
         hsmooth.errs = conf[1] - pred
 
         # cuts applied *after* interpolation
@@ -720,6 +741,7 @@ def smooth_shapes():
     if save_all or save:
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
+
 
 @scripter
 def plot_smooth():
