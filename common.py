@@ -468,12 +468,12 @@ def filter_ht(cols, min_ht, bkg_type=None):
 # in units of pb-1 (xsec units: pb)
 lumis = {
     "2016": 36310,
-    "2017": 41480,
-    "2018PRE": 21078,
-    "2018POST": 38755,
+    "2017": 42070,
+    "2018PRE": 20973,
+    "2018POST": 38588,
 }
-lumis["2018"] = lumis["2018PRE"]+lumis["2018POST"] # 59833
-lumis["RUN2"] = lumis["2016"]+lumis["2017"]+lumis["2018"] # 137623
+lumis["2018"] = lumis["2018PRE"]+lumis["2018POST"] # 59561
+lumis["RUN2"] = lumis["2016"]+lumis["2017"]+lumis["2018"] # 137941
 
 # from madgraph (BR to dark included), MADPT>300, jet matching efficiency included, for gq = 0.25
 # w/ Z-like k-factor 1.23
