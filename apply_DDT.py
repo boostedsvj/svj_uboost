@@ -469,6 +469,8 @@ def main():
         ax.plot(best_bdt_cuts[:,0], best_bdt_cuts[:,1], marker='o')
         ax.text(0.05, 0.10, f'Optimal Cut: {optimal_bdt_cut:.2f}', transform=ax.transAxes, verticalalignment='top')
         ax.ticklabel_format(style='sci', axis='x')
+        if ana_type != 'RT':
+            ax.set_ylim(bottom=0.1, top=330)
         ax.set_ylabel('Best BDT Cut Value' if ana_type == "BDT-based" else "ECF cut value")
         ax.set_xlabel("$m(\\mathrm{Z'})$ [GeV]")
         # cannot use layout_tight, will cause saving errors
