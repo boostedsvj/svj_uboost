@@ -157,7 +157,7 @@ def main():
         "RT": {
             "features": ["rt"] + features_common,
             "inputs_to_primary": lambda x: x[:, 0],
-            "primary_var_label": "$r_T$ $>$",
+            "primary_var_label": "$R_T$ $>$",
             "default_cut_vals": [np.round(x,4) for x in np.linspace(1.14, 1.22, 17)],
             "smear": 0.2,
         },
@@ -229,7 +229,7 @@ def main():
             plot_single(var_map[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
             plot_single(gaussian_filter(var_map[:,:,1], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
-                plot_single(gaussian_filter(var_map[:,:,0], smear).T, f'2D_map_{ana_label}_{cut_val}_antiRT')
+                plot_single(gaussian_filter(var_map[:,:,0], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
     if 'bkg_scores_mt' in plots :
@@ -443,7 +443,7 @@ def main():
         ax.legend(handles, labels, loc='upper left', bbox_to_anchor=(1, 1))
         ax.ticklabel_format(style='sci', axis='x')
         ax.set_ylabel('FoM')
-        ax.set_xlabel('BDT cut value' if ana_type == "BDT-based" else "ECF cut value")
+        ax.set_xlabel(ana_variant_dict[ana_type]["primary_var_label"] + "x")
         if verbosity > 0 : print(f"plotting the FOM for the {ana_type} cuts")
 
         # Save the plot as a PDF and png file
