@@ -376,14 +376,18 @@ def main():
             for mass in signal_xsecs.keys()
         }
         # Prepare a figure
-        fig = plt.figure(figsize=(10, 7))
-        hep.cms.label(rlabel="(13 TeV)") # full run 2
-        ax = fig.gca()
         ana_label = ana_type
         if rt_ddt_file is not None:
             ana_label += 'withRTDDT'
 
-        best_bdt_cuts = [] #store the best bdt values
+        # Storing the results of interest from the cut scanning
+        best_bdt_cuts = [] #store the best cut values
+        best_fom_vals = [] #store the optimal FOM for each mass point
+        # Storing the FOM array and the input components of the array
+        FOM_lists = []
+        S_count_lists = []
+        B_count_lists = []
+
         # Iterate over the variables in the 'con' dictionary
         for mz, mz_files in files_by_mass.items():
             s = f'bsvj_{mz:d}_10_0.3'
@@ -395,8 +399,8 @@ def main():
             bkg_score_ddt = []
             if verbosity > 0 : print("Applying the DDT and calculate FOM")
 
-            # Iterate over the bdt cut values
-            fom = [] # to store the figure of merit values
+            # Iterate over the cut values
+            fom, s_count, b_count = [],[],[] # to store the figure of merit values
             for cut_val in var_cuts:
                 def _get_ddt_yield(mT, pT, rT, var, weight):
                     rt_mask = make_RT_selection(mT, pT, rT, rt_sel, rt_ddt_file)
@@ -413,69 +417,83 @@ def main():
                 F = FOM(S,B)
                 if verbosity > 0 : print("mZ': ", mz, "cut:" , cut_val, " S: ", S, "B: ", B, "FOM:" , F)
                 fom.append(F)
+                s_count.append(S)
+                b_count.append(B)
 
             # Find the cut value corresponding to the maximum figure of merit
-            fom_array = np.array(fom)
-            bdt_cuts_array = np.array(var_cuts)
-            best_bdt_cuts.append([mz, bdt_cuts_array[np.where(fom_array == max(fom_array))[0]][0]])
+            best_bdt_cuts.append([mz, var_cuts[np.argmax(fom)]])
+            best_fom_vals.append([mz, np.max(fom)])
+            FOM_lists.append([mz, fom])
+            S_count_lists.append([mz, s_count])
+            B_count_lists.append([mz, b_count])
             if verbosity > 1 : print(best_bdt_cuts)
 
-            # Plot the histogram of the metric variable range
-            if mz == 300: alpha = 1.0
-            else: alpha = 0.3
-            arr = ax.plot(var_cuts,fom, marker='o', label=f"m(Z') {mz}", alpha=alpha)
+        # Plotting the cut-value scan maps
+        for container, plotName, ylabel, yscale in [
+            (FOM_lists, "FOM", "FoM", 'linear'),
+            (S_count_lists, "SCount", "Num. of Signal", 'log'),
+            (B_count_lists, "BCount", "Num. of Background", 'log')
+        ]:
+            fig = plt.figure(figsize=(10, 7))
+            hep.cms.label(rlabel="(13 TeV)") # full run 2
+            ax = fig.gca()
 
-        # grab labels that will go into the legend
-        handles, labels = ax.get_legend_handles_labels()
+            for mz, var in container:
+                alpha = 1.0 if mz == 300 else 0.3
+                ax.plot(var_cuts, var, marker='o', label=f"m(Z') {mz}", alpha=alpha)
 
-        # Convert last part of labels to integers, handle errors if conversion is not possible
-        masses = []
-        for label in labels:
-            try:
-                mass = int(label.split()[-1])  # Assuming mass is the last word in the label
-            except ValueError:
-                mass = float('inf')  # If conversion fails, assign a large number
-            masses.append(mass)
+            # grab labels that will go into the legend
+            handles, labels = ax.get_legend_handles_labels()
 
-        # Sort legend items by mass (in descending order)
-        labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: masses[labels.index(t[0])], reverse=True))
+            # Convert last part of labels to integers, handle errors if conversion is not possible
+            masses = []
+            for label in labels:
+                try:
+                    mass = int(label.split()[-1])  # Assuming mass is the last word in the label
+                except ValueError:
+                    mass = float('inf')  # If conversion fails, assign a large number
+                masses.append(mass)
 
-        ax.legend(handles, labels, loc='upper left', bbox_to_anchor=(1, 1))
-        ax.ticklabel_format(style='sci', axis='x')
-        ax.set_ylabel('FoM')
-        ax.set_xlabel(ana_variant_dict[ana_type]["primary_var_label"] + "x")
-        if verbosity > 0 : print(f"plotting the FOM for the {ana_type} cuts")
+            # Sort legend items by mass (in descending order)
+            labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: masses[labels.index(t[0])], reverse=True))
 
-        # Save the plot as a PDF and png file
-        # cannot use layout_tight, will cause saving errors
-        save_plot(plt, f'metrics_{ana_label}_FOM', flag_tight_layout=False, bbox_inches='tight')
-        plt.close()
+            ax.legend(handles, labels, loc='upper left', bbox_to_anchor=(1, 1))
+            ax.ticklabel_format(style='sci', axis='x')
+            ax.set_ylabel(ylabel)
+            ax.set_yscale(yscale)
+            ax.set_xlabel(ana_variant_dict[ana_type]["primary_var_label"] + "x")
+            save_plot(plt, f'metrics_{ana_label}_{plotName}', flag_tight_layout=False, bbox_inches='tight')
+            plt.close()
 
         # sort the best bdt cuts
-        best_bdt_cuts = np.array(best_bdt_cuts)
-        sort_indices = np.argsort(best_bdt_cuts[:,0]) #sort array to ascend by mz
-        best_bdt_cuts = best_bdt_cuts[sort_indices]
+        for container, plotName, ylabel in [
+            (best_bdt_cuts, "cuts", "Best cut value"),
+            (best_fom_vals, "fom", "Maximum FOM value")
+        ]:
+            best_bdt_cuts = np.array(container)
+            sort_indices = np.argsort(best_bdt_cuts[:,0]) #sort array to ascend by mz
+            best_bdt_cuts = best_bdt_cuts[sort_indices]
 
-        # Find optimal cut
-        mask = (best_bdt_cuts[:,0] >= 200) & (best_bdt_cuts[:,0] <= 400) if ana_type == "BDT-based" else np.ones_like(best_bdt_cuts[:,0], dtype=bool)
-        selected_values = best_bdt_cuts[mask, 1]
-        average = np.mean(selected_values)
-        optimal_bdt_cut = min(var_cuts, key=lambda x: abs(x - average)) # Finding the nearest value in ana_variant['cut_values'] to the calculated average
+            # Find optimal cut
+            mask = (best_bdt_cuts[:,0] >= 200) & (best_bdt_cuts[:,0] <= 400) if ana_type == "BDT-based" else np.ones_like(best_bdt_cuts[:,0], dtype=bool)
+            selected_values = best_bdt_cuts[mask, 1]
+            average = np.mean(selected_values)
+            optimal_bdt_cut = min(var_cuts, key=lambda x: abs(x - average)) # Finding the nearest value in ana_variant['cut_values'] to the calculated average
 
-        # plot the best bdt cuts
-        fig = plt.figure(figsize=(10, 7))
-        hep.cms.label(rlabel="(13 TeV)") # full run 2
-        ax = fig.gca()
-        ax.plot(best_bdt_cuts[:,0], best_bdt_cuts[:,1], marker='o')
-        ax.text(0.05, 0.10, f'Optimal Cut: {optimal_bdt_cut:.2f}', transform=ax.transAxes, verticalalignment='top')
-        ax.ticklabel_format(style='sci', axis='x')
-        if ana_type != 'RT':
-            ax.set_ylim(bottom=0.1, top=330)
-        ax.set_ylabel('Best BDT Cut Value' if ana_type == "BDT-based" else "ECF cut value")
-        ax.set_xlabel("$m(\\mathrm{Z'})$ [GeV]")
-        # cannot use layout_tight, will cause saving errors
-        save_plot(plt, f'best_{ana_label}_cuts', flag_tight_layout=False, bbox_inches='tight')
-        plt.close()
+            # plot the best bdt cuts
+            fig = plt.figure(figsize=(10, 7))
+            hep.cms.label(rlabel="(13 TeV)") # full run 2
+            ax = fig.gca()
+            ax.plot(best_bdt_cuts[:,0], best_bdt_cuts[:,1], marker='o')
+            ax.text(0.05, 0.10, f'Optimal Cut: {optimal_bdt_cut:.2f}', transform=ax.transAxes, verticalalignment='top')
+            ax.ticklabel_format(style='sci', axis='x')
+            if ana_type != 'RT':
+                ax.set_ylim(bottom=0.1, top=330)
+            ax.set_ylabel(ylabel)
+            ax.set_xlabel("$m(\\mathrm{Z'})$ [GeV]")
+            # cannot use layout_tight, will cause saving errors
+            save_plot(plt, f'best_{ana_label}_{plotName}', flag_tight_layout=False, bbox_inches='tight')
+            plt.close()
 
     # _____________________________________________
     # Create Significance Plots
