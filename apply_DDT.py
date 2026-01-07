@@ -30,7 +30,7 @@ import seutils as se
 
 np.random.seed(1001)
 
-from common import read_training_features, logger, lumis, DATADIR, Columns, time_and_log, imgcat, set_mpl_fontsize, columns_to_numpy, apply_rt_signalregion, calc_bdt_scores, expand_wildcards, signal_xsecs, MTHistogram, get_event_weight, mask_isolated_bins, SELECTION_RT_SIGNAL_REGION
+from common import read_training_features, logger, lumis, DATADIR, Columns, time_and_log, imgcat, set_mpl_fontsize, columns_to_numpy, apply_rt_signalregion, calc_bdt_scores, expand_wildcards, signal_xsecs, MTHistogram, get_event_weight, compute_bkg_isolatedevt_mask, SELECTION_RT_SIGNAL_REGION
 
 #------------------------------------------------------------------------------
 # Global variables and user input arguments -----------------------------------
@@ -99,23 +99,6 @@ def save_plot(plt, plt_name, flag_tight_layout=True, **kwargs):
 
 
 def make_ddt_inputs(input_files: list[str], all_features: list[str]):
-    def _get_mask(x, w):
-        mt = x[:,-3]
-        # Creating bins from the main histogram of interest, we don't really care about the actual
-        # range as long as it ls larger than the defined region-of-interest of the fit
-        mt_binw, mt_min, mt_max = MTHistogram.default_binning
-        mt_min = np.around(mt_min / 2, mt_binw)
-        mt_max = np.around(mt_max * 2, mt_binw)
-        mt_edges = np.arange(mt_min, mt_max, mt_binw)
-        bin_idx = np.digitize(mt, mt_edges) # Getting which bin the item should be in
-        bin_idx[bin_idx==0] = 1 # put underflow into first bin
-        bin_idx[bin_idx==len(mt_edges)] = len(mt_edges)-1 # put overflow into last bin
-        bin_idx = bin_idx - 1 # shift to be consistent with histogram indexing
-        bin_count, _ = np.histogram(mt, bins=mt_edges) # Getting the number of entries in each bin
-        mask_bin = mask_isolated_bins(bin_count)
-        return mask_bin[bin_idx] # Extracting to per-event masking via array index
-
-    # Extract and filter
     X_list, W_list = [], []
     for input_file in input_files:
         col = Columns.load(input_file)
@@ -124,7 +107,7 @@ def make_ddt_inputs(input_files: list[str], all_features: list[str]):
         if len(x) == 0: # Skipping length 0 arrays, as this messes up the masking creating routine
             continue
         # Only construct mask for background sample
-        mask = _get_mask(x,w) if col.metadata['sample_type'] == 'bkg' else np.ones_like(w, dtype=bool)
+        mask = compute_bkg_isolatedevt_mask(x[:,-3]) if col.metadata['sample_type'] == 'bkg' else np.ones_like(w, dtype=bool)
         X_list.append(x[mask])
         W_list.append(w[mask])
 
