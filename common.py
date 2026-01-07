@@ -690,6 +690,26 @@ def mask_isolated_bins(counts):
             mask_bin.append(True)
     return np.array(mask_bin)
 
+def compute_bkg_isolatedevt_mask(mT):
+    """
+    Given the mT array of background events from a single background sample, return a True/False array of 
+    whether to keep the event. If the events appears in an isloated bin in the
+    standard mT binning scheme. The event is rejected
+    """
+    # Creating bins from the main histogram of interest, we don't really care about the actual
+    # range as long as it ls larger than the defined region-of-interest of the fit
+    mt_binw, mt_min, mt_max = MTHistogram.default_binning
+    mt_min = np.around(mt_min / 2, mt_binw)
+    mt_max = np.around(mt_max * 2, mt_binw)
+    mt_edges = np.arange(mt_min, mt_max, mt_binw)
+    bin_idx = np.digitize(mT, mt_edges) # Getting which bin the item should be in
+    bin_idx[bin_idx==0] = 1 # put underflow into first bin
+    bin_idx[bin_idx==len(mt_edges)] = len(mt_edges)-1 # put overflow into last bin
+    bin_idx = bin_idx - 1 # shift to be consistent with histogram indexing
+    bin_count, _ = np.histogram(mT, bins=mt_edges) # Getting the number of entries in each bin
+    mask_bin = mask_isolated_bins(bin_count)
+    return mask_bin[bin_idx] # Extracting to per-event masking via array index
+
 def _create_binning(binw, left, right):
     bins = left + binw * np.arange(math.ceil((right-left)/binw)+1)
     # Force casting to python floats, as numpy values causes issues with JSON serialization
