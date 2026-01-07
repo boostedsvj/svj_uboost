@@ -32,14 +32,13 @@ from common import (
     DATADIR,
     Columns,
     expand_wildcards,
-    #filter_pt,
     mt_wind,
     time_and_log,
     apply_rt_signalregion_ddt,
     columns_to_numpy,
     get_event_weight,
-    mask_isolated_bins,
-    MTHistogram,
+    compute_bkg_isolatedevt_mask,
+    mask_each_bkg_file,
     add_key_value_to_json,
 )
 
@@ -63,65 +62,6 @@ def load_cols_from_pattern(pattern: str):
 
 def filter_signal_files_by_mz(files, mz: int):
     return [f for f in files if (f"mz{mz}" in f) or (f"mMed-{mz}" in f)]
-
-
-def mt_edges_from_default_binning():
-    mt_binw, mt_min, mt_max = MTHistogram.default_binning
-    mt_min = np.around(mt_min / 2, mt_binw)
-    mt_max = np.around(mt_max * 2, mt_binw)
-    return np.arange(mt_min, mt_max, mt_binw)
-
-
-def compute_isolatedbin_keep_mask_for_window(bkg_cols, mt_low, mt_high):
-    """
-    Compute apply_DDT-style isolated-bin mask once per window, using combined
-    background mT distribution inside the window (QCD+TT).
-    Returns:
-      - mt_edges
-      - keep_bins: boolean per-bin mask
-    """
-    mt_edges = mt_edges_from_default_binning()
-
-    # gather all bkg mt within the window
-    mt_all = []
-    for c in bkg_cols:
-        mt = c.arrays["mt"]
-        sel = (mt > mt_low) & (mt < mt_high)
-        if np.any(sel):
-            mt_all.append(mt[sel])
-
-    if not mt_all:
-        # no data in window => keep everything
-        keep_bins = np.ones(len(mt_edges) - 1, dtype=bool)
-        return mt_edges, keep_bins
-
-    mt_all = np.concatenate(mt_all)
-    counts, _ = np.histogram(mt_all, bins=mt_edges)
-    keep_bins = mask_isolated_bins(counts)
-    return mt_edges, keep_bins
-
-
-def apply_isolatedbin_mask_to_columns(cols_list, mt_low, mt_high, mt_edges, keep_bins):
-    """
-    Apply precomputed keep_bins to each Columns object, but only within the mt window.
-    """
-    out = []
-    for c in cols_list:
-        mt = c.arrays["mt"]
-        in_win = (mt > mt_low) & (mt < mt_high)
-        if not np.any(in_win):
-            out.append(c)
-            continue
-
-        bin_idx = np.digitize(mt, mt_edges)
-        bin_idx[bin_idx == 0] = 1
-        bin_idx[bin_idx == len(mt_edges)] = len(mt_edges) - 1
-        bin_idx = bin_idx - 1
-
-        keep_evt = np.ones_like(mt, dtype=bool)
-        keep_evt[in_win] = keep_bins[bin_idx[in_win]]
-        out.append(c.select(keep_evt))
-    return out
 
 
 def build_bkg_arrays_separately(qcd_cols, tt_cols, features, mt_low, mt_high,
@@ -207,7 +147,6 @@ def parse_args():
     p.add_argument("--sig_files", default=osp.join(DATADIR, "train_signal/*.npz"))
 
     p.add_argument("--features", nargs="+", default=None)
-    #p.add_argument("--ptmin", type=float, default=300.0)
 
     p.add_argument("--n_repeats", type=int, default=5)
     p.add_argument("--mt_window", type=float, default=100.0)
@@ -240,6 +179,9 @@ def parse_args():
 
     return p.parse_args()
 
+#-----------------------------------------------------------------------------------------
+# The Main function ----------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------
 
 def main():
     args = parse_args()
@@ -252,12 +194,14 @@ def main():
     qcd_cols = load_cols_from_pattern(args.qcd_files)
     tt_cols  = load_cols_from_pattern(args.tt_files)
 
-    #qcd_cols = filter_pt(qcd_cols, args.ptmin)
-    #tt_cols  = filter_pt(tt_cols,  args.ptmin)
-
     # RT-DDT SR
     qcd_cols = [apply_rt_signalregion_ddt(c) for c in qcd_cols]
     tt_cols  = [apply_rt_signalregion_ddt(c) for c in tt_cols]
+
+    # Identify and mask for isolated bins with high weights
+    if not args.no_isolatedbin_mask:
+        qcd_cols = mask_each_bkg_file(qcd_cols)
+        tt_cols  = mask_each_bkg_file(tt_cols)
 
     # Setup xgboost
     import xgboost as xgb
@@ -303,19 +247,11 @@ def main():
             continue
 
         sig_cols = [Columns.load(f) for f in sig_files]
-        #sig_cols = filter_pt(sig_cols, args.ptmin)
         sig_cols = [apply_rt_signalregion_ddt(c) for c in sig_cols]
-
-        # isolated-bin mask computed ONCE per window using combined bkg
-        qcd_use, tt_use = qcd_cols, tt_cols
-        if not args.no_isolatedbin_mask:
-            mt_edges, keep_bins = compute_isolatedbin_keep_mask_for_window(qcd_cols + tt_cols, mt_low, mt_high)
-            qcd_use = apply_isolatedbin_mask_to_columns(qcd_cols, mt_low, mt_high, mt_edges, keep_bins)
-            tt_use  = apply_isolatedbin_mask_to_columns(tt_cols,  mt_low, mt_high, mt_edges, keep_bins)
 
         # Build bkg arrays separately
         X_qcd, w_qcd, X_tt, w_tt = build_bkg_arrays_separately(
-            qcd_use, tt_use,
+            qcd_cols, tt_cols,
             features=features,
             mt_low=mt_low, mt_high=mt_high,
             downsample_qcd=args.downsample_qcd,
