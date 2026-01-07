@@ -8,26 +8,19 @@ import matplotlib.pyplot as plt
 
 from common import (
     logger, Columns, time_and_log, columns_to_numpy, read_training_features,
-    apply_rt_signalregion_ddt,
-    mask_each_bkg_file
+    apply_rt_signalregion_ddt, mask_each_bkg_file, get_event_weight
 )
-from training import reweight
 
-def clip_weights(w, q=99.5):
-    # needed because I still seem to have some high weight events affecting the KS test
-    cap = np.percentile(w, q)
-    return np.minimum(w, cap)
+def ensure_event_weights(cols_list, weight_key="real_weight"):
+    for c in cols_list:
+        if weight_key not in c.arrays:
+            c.arrays[weight_key] = get_event_weight(c)
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('model', help='.json file to the trained model')
     parser.add_argument('-d', '--debug', action='store_true',
                         help='Uses only small part of data set for testing')
-    parser.add_argument(
-        '--ref', type=str,
-        default='data/train_signal/Private3DUL18/SVJ_s-channel_mMed-350_mDark-10_rinv-0p3_alpha-peak_MADPT300_13TeV-madgraphMLM-pythia8.npz',
-        help='path to the npz file for the reference distribution for reweighting.'
-    )
     parser.add_argument('--downsample', type=float, default=1.0) # seems bad to downsample for KS test
     parser.add_argument('--out', default='plots/overfit.png')
     parser.add_argument('--no-rtddt', action='store_true',
@@ -43,7 +36,7 @@ def main():
     training_features = read_training_features(args.model)
 
     # __________________________________________________________
-    # Load data (same structure as your old script)
+    # Load data
     DATADIR = 'data'
     train_signal_cols = [Columns.load(f) for f in glob.glob(DATADIR + '/train_signal/Private3DUL18/*.npz')]
     test_signal_cols  = [Columns.load(f) for f in glob.glob(DATADIR + '/test_signal/Private3DUL18/*.npz')]
@@ -74,7 +67,7 @@ def main():
             train_bkg_cols    = [apply_rt_signalregion_ddt(c) for c in train_bkg_cols]
             test_bkg_cols     = [apply_rt_signalregion_ddt(c) for c in test_bkg_cols]
 
-    # Drop empties early
+    # Drop empty files
     train_signal_cols = [c for c in train_signal_cols if len(c) > 0]
     test_signal_cols  = [c for c in test_signal_cols if len(c) > 0]
     train_bkg_cols    = [c for c in train_bkg_cols if len(c) > 0]
@@ -84,8 +77,8 @@ def main():
     # Apply bad-weight / isolated-bin mask 
     if not args.no_isobin:
         with time_and_log("Applying bad-weight (isolated mT bin) mask..."):
-            train_bkg_cols = mask_each_bkg_file(train_bkg_cols)
-            test_bkg_cols  = mask_each_bkg_file(test_bkg_cols)
+            train_bkg_cols = mask_each_bkg_file(train_bkg_cols, log=True)
+            test_bkg_cols  = mask_each_bkg_file(test_bkg_cols, log=True)
 
     # Drop empties again
     train_signal_cols = [c for c in train_signal_cols if len(c) > 0]
@@ -97,31 +90,28 @@ def main():
                 f"test_sig={len(test_signal_cols)} test_bkg={len(test_bkg_cols)}")
 
     # __________________________________________________________
-    # Reweighting to mT (train/test separately)
-    reference_col = Columns.load(osp.abspath(args.ref))
-
-    with time_and_log("Reweighting train to mT..."):
-        reweight(reference_col, train_signal_cols + train_bkg_cols, 'mt')
-
-    with time_and_log("Reweighting test to mT..."):
-        reweight(reference_col, test_signal_cols + test_bkg_cols, 'mt')
-
-    # __________________________________________________________
     # Score
+    with time_and_log("Preparing event weights..."):
+        ensure_event_weights(train_signal_cols, weight_key="real_weight")
+        ensure_event_weights(test_signal_cols,  weight_key="real_weight")
+        ensure_event_weights(train_bkg_cols,    weight_key="real_weight")
+        ensure_event_weights(test_bkg_cols,     weight_key="real_weight")
+
     with time_and_log('Scoring...'):
         X_train, y_train, weight_train = columns_to_numpy(
             train_signal_cols, train_bkg_cols, training_features,
-            weight_key='reweight', downsample=args.downsample
+            weight_key="real_weight", downsample=args.downsample
         )
-        weight_train *= 100.
+        weight_train *= 100.0
         score_train = model.predict_proba(X_train)[:, 1]
-
+ 
         X_test, y_test, weight_test = columns_to_numpy(
             test_signal_cols, test_bkg_cols, training_features,
-            weight_key='reweight', downsample=args.downsample
+            weight_key="real_weight", downsample=args.downsample
         )
-        weight_test *= 100.
+        weight_test *= 100.0
         score_test = model.predict_proba(X_test)[:, 1]
+
 
     # __________________________________________________________
     # Histograms (normalized)
@@ -135,8 +125,8 @@ def main():
 
     hist_sig_train = hist_norm(score_train[y_train == 1], weight_train[y_train == 1])
     hist_sig_test  = hist_norm(score_test[y_test == 1],  weight_test[y_test == 1])
-    hist_bkg_train = hist_norm(score_train[y_train == 0], clip_weights(weight_train[y_train == 0]))
-    hist_bkg_test  = hist_norm(score_test[y_test == 0],  clip_weights(weight_test[y_test == 0]))
+    hist_bkg_train = hist_norm(score_train[y_train == 0], weight_train[y_train == 0])
+    hist_bkg_test  = hist_norm(score_test[y_test == 0],  weight_test[y_test == 0])
 
 
     # KS on unbinned scores (unweighted)
