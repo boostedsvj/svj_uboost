@@ -63,7 +63,7 @@ def parse_arguments():
 
     # Allowed plots: 2D DDT maps, Background Scores vs MT, FOM significance,
     #                Signal mt spectrums for one BDT working point,  one signal mt spectrum for many BDT working points
-    allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'fom_significance', 'fom_mt_scan', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
+    allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'sig_scores_mt', 'fom_significance', 'fom_mt_scan', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
     parser.add_argument('--plot', nargs='*', type=str, default=[], choices=allowed_plots, help='Plots to make')
 
     # Add verbosity level argument
@@ -365,6 +365,48 @@ def main():
             save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_normalized_{ana_label}')
 
         if verbosity > 1 : print(primary_var_ddt)
+
+    if 'sig_scores_mt' in plots :
+        if verbosity > 0 : print("Applying the DDT to the signal sample")
+        # Common label
+        var_label = ana_variant["primary_var_label"]
+        ana_label = ana_type
+        if rt_ddt_file is not None:
+            ana_label += 'withRTDDT'
+
+        sig_files =  [
+            f for f in expand_wildcards([sig_files])
+            if f'mMed-300' in f and 'mDark-10' in f and 'rinv-0p3' in f
+        ]
+        sig_X, sig_pT, sig_mT, sig_rT, sig_weight = make_ddt_inputs(sig_files, ana_variant['features'])
+        sig_primary_var = ana_variant["inputs_to_primary"](sig_X)
+        sig_rt_mask = make_RT_selection(sig_mT, sig_pT, sig_rT, rt_sel, rt_ddt_file)
+        primary_var_ddt = { cut_val: calculate_varDDT(sig_mT, sig_pT, sig_rt_mask, sig_primary_var, cut_val, ddt_map_file, smear=smear) for cut_val in tqdm.tqdm(var_cuts)}
+
+        def save_mt_fig(ax, name, save_log=False):
+            # Common method for fixing files for MT, related items
+            ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
+            ax.legend()
+            save_plot(plt, name)
+            if save_log:
+                ax.set_yscale('log') # Saving a log version of the plot
+                save_plot(plt,f'log_{name}')
+            plt.close()
+
+        # Apply DDT > 0.0 for the different BDT score transformations
+        fig, ax = simple_fig()
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & sig_rt_mask
+            ax.hist(sig_mT[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=sig_weight[SR_mask])
+        save_mt_fig(ax, f'sig_events_vs_mT_{ana_label}', save_log=True)
+
+        # Do it again normalized to unit area
+        fig, ax = simple_fig()
+        for cuts, scores in primary_var_ddt.items():
+            SR_mask = (scores > 0.0) & sig_rt_mask
+            ax.hist(sig_mT[SR_mask], bins=47, range=(180,650), histtype='step', label=f'DDT({var_label} {cuts})', weights=sig_weight[SR_mask], density=True)
+        ax.set_ylabel('Events')
+        save_mt_fig(ax, f'norm_sig_events_vs_mT_{ana_label}', save_log=True)
     # _____________________________________________
     # Create Significance Plots
     if 'fom_significance' in plots :
