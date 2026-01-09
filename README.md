@@ -88,6 +88,10 @@ python3 hadd_skims.py --stageout root://cmseos.fnal.gov//store/user/lpcdarkqcd/b
 
 ## How to run a training
 
+The shell script `run_iter_training.py` provides an example of all the commands necessary to complete an iterative training.
+The explicit steps are outlined below:
+
+
 First download the training data (~4.7 Gb), and split it up into a training and test sample:
 
 ```bash
@@ -107,9 +111,24 @@ QCD_Pt_120to170_TuneCP5_13TeV_pythia8.npz
 ... <more>
 ```
 
-Then launch the training script:
+Then there are two options for training
+The first is the  iterative training developed for the boosted SVJ search. This training is quite configurable, but defaults to optimal hyperparameters as recorded in the boosted SVJ AN. An example for the iterative training is below:
 
 ```bash
+# Standard Iterative training
+python iter_training.py xgboost \
+  --qcd_files <qcd_train_path_and_filenames\
+  --tt_files <tt_train_path_and_filenames>\
+  --sig_files <sig_train_path_and_filenames>\
+  --out <model_name> --verbosity 2
+# For customization see arguments menu
+python iter_training -h
+```
+
+The second option is the legacy training script which does not include the iterative training:
+
+```bash
+#Legacy training script, usage not recommended
 python training.py xgboost \
   --reweight mt --ref data/train_signal/madpt300_mz350_mdark10_rinv0.3.npz \
   --lr .05 \
@@ -124,11 +143,34 @@ The script `hyperparameteroptimization.py` runs this command for various setting
 
 ### Evaluate
 
+The first evaluation script is rather generic and plots a general ROC curve, mT distribution, and score histogram.
+
 ```bash
-python evaluate.py
+python evaluate.py --model <model_path_and_name> 
 ```
 
-The paths to the model are currently hard-coded! Things are still too fluid for a good abstraction.
+The second plots AUC scores versus signal masses against different backgrounds in +/- 100 GeV windows around the signal masses
+
+```bash
+python evaluate_auc_vs_mz.py --model <model_path_and_name> 
+  --qcd_files <qcd_test_path_and_filenames\
+  --tt_files <tt_test_path_and_filenames>\
+  --sig_files <sig_test_path_and_filenames>\
+  --mt-halfwindow <desired_mt-window> \ # standard 100
+```
+
+The third is a simple file that ranks the feature importance of the model
+
+```bash
+python feature_importance.py --model <model_path_and_name>
+```
+
+And finally a script to determine the correlation matrix
+
+```bash
+python correlation_matrix.py --model  <model_path_and_name>
+```
+
 
 ### Create and apply a DDT
 
