@@ -985,17 +985,17 @@ def columns_to_numpy(
         signal_weight.append((1./len_sig_cols)*np.ones(len_sig_cols))
 
     def concat_allow_len0(arrs, shape=None, **kwargs):
-        if (len(arrs)): reteurn np.concatenate(arrs)
+        if (len(arrs)): return np.concatenate(arrs)
         shape = (0,) if shape is None else (0, shape)
         return np.zeros(shape, **kwargs)
 
     X = concat_allow_len0(X, shape=len(features))
     y = concat_allow_len0(y, dtype=int)
 
-    bkg_weights = concat_allow_len0(bkg_weights) # Dtype default to floa
-    sig_weights = concate_allow_len0(sig_weights) 
-    sig_weights *= (np.sum(bkg_weights) / np.sum(signal_sum)) # This will raise warning about divide by zero, but since sig_weights is a leng 0 array
-    weights = concat_allow_len0((bkg_weights, sig_weights)) # Actually fine with np.concatenate, since the first condition is always met in this call
+    bkg_weight = concat_allow_len0(bkg_weight) # Dtype default to float
+    signal_weight = concat_allow_len0(signal_weight) 
+    signal_weight *= (np.sum(bkg_weight) / np.sum(signal_weight)) # This will raise warning about divide by zero, but since sig_weights is a leng 0 array
+    weights = concat_allow_len0((bkg_weight, signal_weight)) # Actually fine with np.concatenate, since the first condition is always met in this call
     return X, y, weights
 
 
