@@ -97,21 +97,30 @@ def compute_auc_for_mass(model, features, sig_cols_mz, bkg_cols, mz, mt_halfwidt
     )
     return float(auc), info
 
-def plot_auc(masses, aucs, outpath):
+def plot_auc(masses, curves, outpath):
     hep.style.use("CMS")
 
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(10, 8))
     ax = fig.gca()
 
-    ax.plot(masses, aucs, marker='o', linestyle='-')
+    for c in curves:
+        ax.plot(
+            masses,
+            c["aucs"],
+            label=c["label"],
+            marker=c.get("marker", "o"),
+            linestyle=c.get("linestyle", "-"),
+        )
+
     ax.set_xlabel(r"$m_{Z'}$ [GeV]")
     ax.set_ylabel("AUC")
     ax.set_ylim(0.5, 1.0)
+    ax.legend()
 
-    hep.cms.label(rlabel="Work in Progress", ax=ax) 
+    hep.cms.label(rlabel="(2018)", ax=ax)
 
     os.makedirs(osp.dirname(outpath) or ".", exist_ok=True)
-    plt.savefig(outpath, bbox_inches='tight')
+    plt.savefig(outpath, bbox_inches="tight")
     logger.info(f"Saved {outpath}")
 
 #-----------------------------------------------------------------------------------------
@@ -213,13 +222,28 @@ def main():
 
     # Plot
     plot_auc(
-        masses, auc_vs_qcd,
-        osp.join(args.outdir, "bdt_auc_vs_mz_sig_vs_qcd.png"),
+        masses,
+        curves=[
+            dict(aucs=auc_vs_qcd, label="Signal vs QCD"),
+        ],
+        outpath=osp.join(args.outdir, "bdt_auc_vs_mz_sig_vs_qcd.png"),
     )
     plot_auc(
-        masses, auc_vs_tt,
-        osp.join(args.outdir, "bdt_auc_vs_mz_sig_vs_tt.png"),
+        masses,
+        curves=[
+            dict(aucs=auc_vs_tt, label="Signal vs TT"),
+        ],
+        outpath=osp.join(args.outdir, "bdt_auc_vs_mz_sig_vs_tt.png"),
     )
+    plot_auc(
+        masses,
+        curves=[
+            dict(aucs=auc_vs_qcd, label="vs QCD", linestyle="-",  marker="o"),
+            dict(aucs=auc_vs_tt,  label="vs tt",  linestyle="--", marker="s"),
+        ],
+        outpath=osp.join(args.outdir, "bdt_auc_vs_mz_sig_vs_qcd_and_tt.png"),
+    )
+
 
 if __name__ == "__main__":
     main()

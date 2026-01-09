@@ -72,7 +72,7 @@ def main():
             bkg_cols    = [c for c in bkg_cols if len(c) > 0]
             logger.info(f"After RT-DDT SR: Nsig_files={len(signal_cols)} Nbkg_files={len(bkg_cols)}")
 
-    # Apply bad-weight / isolated-bin mask (apply_DDT-style)
+    # Apply isolated-bin mask
     if not args.no_isobin:
         with time_and_log("Applying isolated-bin mT mask to test samples..."):
             bkg_cols = mask_each_bkg_file(bkg_cols)
