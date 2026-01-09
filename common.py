@@ -966,7 +966,6 @@ def columns_to_numpy(
         this_X = cols.to_numpy(features)[mtwind]
         this_weight = cols.arrays[weight_key][mtwind]
         if downsample < 1.:
-            #select = np.random.choice(len(cols), int(downsample*len(cols)), replace=False)
             select = np.random.choice(len(this_weight), int(downsample*len(this_weight)), replace=False)
             this_X = this_X[select]
             this_weight = this_weight[select]
@@ -978,52 +977,26 @@ def columns_to_numpy(
     for cols in signal_cols:
         sigmtwind = mt_wind(cols, mt_high, mt_low)
         X.append(cols.to_numpy(features)[sigmtwind])
-        #print(features)
         len_sig_cols=len(cols.arrays[features[0]][sigmtwind])
-        #print(cols.to_numpy(features)[sigmtwind])
-        #print(len(cols.to_numpy(features)[sigmtwind]))
-        #length_of_signalCol=len(cols.arrays(features)[mtwind])
-        #print(length_of_signalCol, len(cols))
         y.append(np.ones(len_sig_cols))
         # All signal model parameter variations should get equal weight,
         # but some signal samples have more events.
         # Use 1/n_events as a weight per event.
         signal_weight.append((1./len_sig_cols)*np.ones(len_sig_cols))
 
-    # finalize X,y (allow for an option that nothing was passed)
-    X = np.concatenate(X) if len(X) else np.zeros((0, len(features)))
-    y = np.concatenate(y) if len(y) else np.zeros((0,), dtype=int)
+    def concat_allow_len0(arrs, shape=None, **kwargs):
+        if (len(arrs)): reteurn np.concatenate(arrs)
+        shape = (0,) if shape is None else (0, shape)
+        return np.zeros(shape, **kwargs)
 
-    # finalize weights
-    has_bkg = (len(bkg_weight) > 0)
-    has_sig = (len(signal_weight) > 0)
+    X = concat_allow_len0(X, shape=len(features))
+    y = concat_allow_len0(y, dtype=int)
 
-    if has_bkg:
-        bkg_weight = np.concatenate(bkg_weight)
-    else:
-        bkg_weight = np.zeros((0,), dtype=float)
-
-    if has_sig:
-        signal_weight = np.concatenate(signal_weight)
-    else:
-        signal_weight = np.zeros((0,), dtype=float)
-
-    # Allow for bkg or sig only cases
-    if has_bkg and not has_sig:
-        return X, y, bkg_weight
-
-    if has_sig and not has_bkg:
-        return X, y, signal_weight
-
-    # normal case: both present -> match totals
-    signal_sum = np.sum(signal_weight)
-    bkg_sum = np.sum(bkg_weight)
-    if signal_sum > 0:
-        signal_weight *= (bkg_sum / signal_sum)
-
-    weight = np.concatenate((bkg_weight, signal_weight))
-    return X, y, weight
-
+    bkg_weights = concat_allow_len0(bkg_weights) # Dtype default to floa
+    sig_weights = concate_allow_len0(sig_weights) 
+    sig_weights *= (np.sum(bkg_weights) / np.sum(signal_sum)) # This will raise warning about divide by zero, but since sig_weights is a leng 0 array
+    weights = concat_allow_len0((bkg_weights, sig_weights)) # Actually fine with np.concatenate, since the first condition is always met in this call
+    return X, y, weights
 
 
 def add_key_value_to_json(json_file, key, value):
