@@ -994,8 +994,8 @@ def columns_to_numpy(
 
     bkg_weight = concat_allow_len0(bkg_weight) # Dtype default to float
     signal_weight = concat_allow_len0(signal_weight) 
-    signal_weight *= (np.sum(bkg_weight) / np.sum(signal_weight)) # This will raise warning about divide by zero, but since sig_weights is a leng 0 array
-    weights = concat_allow_len0((bkg_weight, signal_weight)) # Actually fine with np.concatenate, since the first condition is always met in this call
+    signal_weight *= (np.sum(bkg_weight) / np.sum(signal_weight)) # This will raise warning about divide by zero if sig_weights is a leng 0 array
+    weights = concat_allow_len0((bkg_weight, signal_weight)) 
     return X, y, weights
 
 
