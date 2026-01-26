@@ -57,13 +57,7 @@ def main():
         training_features = read_training_features(args.model)
         logger.info(f"Loaded {len(training_features)} training features from model metadata.")
     except Exception:
-        logger.warning("Could not read training features from model; falling back to hardcoded list.")
-        training_features = [
-            'girth', 'ptd', 'axismajor', 'axisminor',
-            'ecfm2b1', 'ecfd2b1', 'ecfc2b1', 'ecfn2b2', 'metdphi',
-            'ak15_chad_ef', 'ak15_nhad_ef', 'ak15_elect_ef',
-            'ak15_muon_ef', 'ak15_photon_ef',
-        ]
+        logger.warning("Could not read training features from model")
 
     model.feature_names = training_features
 
