@@ -42,9 +42,6 @@ from common import (
     add_key_value_to_json,
 )
 
-np.random.seed(1001)
-random.seed(1001)
-
 DEFAULT_TRAINING_FEATURES = [
     'girth', 'ptd', 'axismajor', 'axisminor',
     'ecfm2b1', 'ecfd2b1', 'ecfc2b1', 'ecfn2b2', 'metdphi',
@@ -54,11 +51,6 @@ DEFAULT_TRAINING_FEATURES = [
 #-----------------------------------------------------------------------------------------
 # User defined function needed for the training ------------------------------------------
 #-----------------------------------------------------------------------------------------
-
-def load_cols_from_pattern(pattern: str):
-    files = [f for f in expand_wildcards([pattern]) if f.endswith(".npz")]
-    return [Columns.load(f) for f in files]
-
 
 def filter_signal_files_by_mz(files, mz: int):
     return [f for f in files if (f"mz{mz}" in f) or (f"mMed-{mz}" in f)]
@@ -113,19 +105,6 @@ def build_signal_arrays(sig_cols, features, mt_low, mt_high):
     return np.concatenate(X_list), np.concatenate(w_list)
 
 
-def cap_weights(w, cap_mult_median: float):
-    """
-    Cap weights at cap_mult_median * median(w)
-    """
-    if cap_mult_median is None or cap_mult_median <= 0 or len(w) == 0:
-        return w
-    med = np.median(w)
-    if not np.isfinite(med) or med <= 0:
-        return w
-    cap = cap_mult_median * med
-    return np.minimum(w, cap)
-
-
 def weight_summary(name, w):
     if len(w) == 0:
         logger.info(f"{name}: empty")
@@ -159,10 +138,9 @@ def parse_args():
     p.add_argument("--global-weight-scale", type=float, default=100.0)
 
     p.add_argument("--no-isolatedbin-mask", action="store_true")
-    p.add_argument("--cap-bkg-weights", type=float, default=0.0,
-                   help="If >0, cap bkg weights at (this * median). Example: 50")
 
     p.add_argument("--print-weight-summary", action="store_true")
+    p.add_argument("--random_seed", type=float, default=1001)
 
     p.add_argument("--eta", type=float, default=0.05)
     p.add_argument("--subsample", type=float, default=1.0)
@@ -188,11 +166,15 @@ def main():
     if args.verbosity > 0:
         logger.info("Args:\n" + pprint.pformat(vars(args)))
 
+    # Get the random seed
+    np.random.seed(args.random_seed)
+    random.seed(args.random_seed)
+
     features = args.features if args.features is not None else list(DEFAULT_TRAINING_FEATURES)
 
     # Load backgrounds once
-    qcd_cols = load_cols_from_pattern(args.qcd_files)
-    tt_cols  = load_cols_from_pattern(args.tt_files)
+    qcd_cols = [Columns.load(f) for f in glob.glob(args.qcd_files)]
+    tt_cols  = [Columns.load(f) for f in glob.glob(args.tt_files)]
 
     # RT-DDT SR
     qcd_cols = [apply_rt_signalregion_ddt(c) for c in qcd_cols]
@@ -264,11 +246,6 @@ def main():
 
         # Emphasize QCD
         w_qcd *= float(args.qcd_factor)
-
-        # Optional cap for stability (after scaling)
-        if args.cap_bkg_weights and args.cap_bkg_weights > 0:
-            w_tt  = cap_weights(w_tt,  args.cap_bkg_weights)
-            w_qcd = cap_weights(w_qcd, args.cap_bkg_weights)
 
         if args.print_weight_summary:
             weight_summary("TT (post-scale)", w_tt)
