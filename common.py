@@ -710,6 +710,36 @@ def compute_bkg_isolatedevt_mask(mT):
     mask_bin = mask_isolated_bins(bin_count)
     return mask_bin[bin_idx] # Extracting to per-event masking via array index
 
+def mask_each_bkg_file(cols_list, log=False):
+    """
+    Apply isolated-bin masking independently to each background file (Columns).
+
+    The isolated-bin mask is computed from the mT distribution of each individual file
+    (e.g. each QCD pT-bin), then applied to that file and combined into a larger set of
+    background files
+    """
+    out = []
+
+    for i, c in enumerate(cols_list):
+
+        # Apply mask
+        mt = c.arrays["mt"]
+        keep_evt = compute_bkg_isolatedevt_mask(mt)
+
+        # Optional log for checking effectiveness 
+        if log:
+            n_tot = len(keep_evt)
+            n_drop = np.sum(~keep_evt)
+            logger.info(
+                f"[isobin] file {i}: removed {n_drop}/{n_tot} "
+                f"({n_drop / max(n_tot,1):.2%}) events"
+            )
+
+        out.append(c.select(keep_evt))
+
+    return out
+
+
 def _create_binning(binw, left, right):
     bins = left + binw * np.arange(math.ceil((right-left)/binw)+1)
     # Force casting to python floats, as numpy values causes issues with JSON serialization
@@ -936,7 +966,6 @@ def columns_to_numpy(
         this_X = cols.to_numpy(features)[mtwind]
         this_weight = cols.arrays[weight_key][mtwind]
         if downsample < 1.:
-            #select = np.random.choice(len(cols), int(downsample*len(cols)), replace=False)
             select = np.random.choice(len(this_weight), int(downsample*len(this_weight)), replace=False)
             this_X = this_X[select]
             this_weight = this_weight[select]
@@ -948,27 +977,26 @@ def columns_to_numpy(
     for cols in signal_cols:
         sigmtwind = mt_wind(cols, mt_high, mt_low)
         X.append(cols.to_numpy(features)[sigmtwind])
-        #print(features)
         len_sig_cols=len(cols.arrays[features[0]][sigmtwind])
-        #print(cols.to_numpy(features)[sigmtwind])
-        #print(len(cols.to_numpy(features)[sigmtwind]))
-        #length_of_signalCol=len(cols.arrays(features)[mtwind])
-        #print(length_of_signalCol, len(cols))
         y.append(np.ones(len_sig_cols))
         # All signal model parameter variations should get equal weight,
         # but some signal samples have more events.
         # Use 1/n_events as a weight per event.
         signal_weight.append((1./len_sig_cols)*np.ones(len_sig_cols))
 
-    bkg_weight = np.concatenate(bkg_weight)
-    signal_weight = np.concatenate(signal_weight)
-    # Set total signal weight equal to total bkg weight
-    signal_weight *= np.sum(bkg_weight) / np.sum(signal_weight)
-    weight = np.concatenate((bkg_weight, signal_weight))
+    def concat_allow_len0(arrs, shape=None, **kwargs):
+        if (len(arrs)): return np.concatenate(arrs)
+        shape = (0,) if shape is None else (0, shape)
+        return np.zeros(shape, **kwargs)
 
-    X = np.concatenate(X)
-    y = np.concatenate(y)
-    return X, y, weight
+    X = concat_allow_len0(X, shape=len(features))
+    y = concat_allow_len0(y, dtype=int)
+
+    bkg_weight = concat_allow_len0(bkg_weight) # Dtype default to float
+    signal_weight = concat_allow_len0(signal_weight) 
+    if len(signal_weight) != 0 : signal_weight *= (np.sum(bkg_weight) / np.sum(signal_weight)) 
+    weights = concat_allow_len0((bkg_weight, signal_weight)) 
+    return X, y, weights
 
 
 def add_key_value_to_json(json_file, key, value):
@@ -1196,7 +1224,7 @@ def check_if_model_exists(model_file, xrootd_url):
 # Direct selection
 SELECTION_RT_SIGNAL_REGION = 1.18
 # DDT selection for RT
-SELECTION_RTDDT_SIGNAL_REGION = 1.20
+SELECTION_RTDDT_SIGNAL_REGION = 1.19
 RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
 RT_DDT_FILE = 'models/rt_ddt_map_ANv6_3d.json'
 
@@ -1327,7 +1355,7 @@ def apply_antiloosecutbased(cols, cut_val=0.09):
 
 # Relative path to the BDT
 # This specific BDT was chosen to be used during the L3 review
-bdt_model_file = 'models/svjbdt_obj_rev_version.json'
+bdt_model_file = 'models/svjbdt_mdark10_rinv03_withRTDDT.json'
 
 def split_bdt(sel):
     parts = sel.split('=')

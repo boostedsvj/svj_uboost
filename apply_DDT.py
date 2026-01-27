@@ -229,7 +229,7 @@ def main():
             plot_single(var_map[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
             plot_single(gaussian_filter(var_map[:,:,1], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
-                plot_single(gaussian_filter(var_map[:,:,0], smear).T, f'2D_map_{ana_label}_{cut_val}_antiRT')
+                plot_single(gaussian_filter(var_map[:,:,0], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
     if 'bkg_scores_mt' in plots :
