@@ -302,6 +302,7 @@ def skim(rootfile, group_data):
     suffs = []
     keep = getattr(group_data, "keep", None)
     skip_cut = getattr(group_data, "skip_cut", None)
+    noskip = skip_cut is None or skip_cut=="dummy"
     if keep is not None:
         suffs.append(f'keep{keep:.2f}')
     if skip_cut is not None:
@@ -381,7 +382,7 @@ def skim(rootfile, group_data):
         array = svj.filter_stitch(array)
 
 
-    if skip_cut is None:
+    if noskip:
         central = svj.filter_preselection(array)
         cols = svj.bdt_feature_columns(central, load_mc=array.metadata["sample_type"]!="data")
     else:
@@ -415,7 +416,7 @@ def skim(rootfile, group_data):
         cols.arrays['pu_sys_up'] = central.array['puSysUp'].to_numpy()
         cols.arrays['pu_sys_down'] = central.array['puSysDown'].to_numpy()
 
-    if skip_cut is None:
+    if noskip:
         cols.metadata['selection'] = 'preselection'
     else:
         cols.metadata["selection"] = f'preselection_minus_{skip_cut}'
@@ -469,7 +470,7 @@ if __name__=="__main__":
         parser = argparse.ArgumentParser()
         parser.add_argument('--stageout', type=str, help='stageout directory', required=True)
         parser.add_argument('-k', '--keep', type=float, default=None)
-        parser.add_argument("--skip_cut", type=str, help="Specify a selection to skip", choices=["rt", "muon_veto", "electron_veto", "metdphi"])
+        parser.add_argument("--skip_cut", type=str, help="Specify a selection to skip", choices=["rt", "muon_veto", "electron_veto", "metdphi", "dummy"])
         parser.add_argument('--impl', dest='storage_implementation', type=str, help='storage implementation', default='xrd', choices=['xrd', 'gfal'])
         parser.add_argument('rootfiles', type=str, nargs='+')
         group_data = parser.parse_args()
