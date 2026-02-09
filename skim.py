@@ -305,7 +305,7 @@ def skim(rootfile, group_data):
     noskip = skip_cut is None or skip_cut=="dummy"
     if keep is not None:
         suffs.append(f'keep{keep:.2f}')
-    if skip_cut is not None:
+    if not noskip:
         suffs.append(f"skip_cut-{skip_cut}")
     outfile = dst(rootfile,group_data.stageout,suffs)
     if seutils.isfile(outfile):
