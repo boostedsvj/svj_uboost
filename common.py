@@ -812,7 +812,18 @@ class METDPhiHistogram(VarArrHistogram):
     name = 'metdphi'
     default_binning = (0.08, 0, 3.2)
 
-registered_varhists = { subcl.name: subcl for subcl in VarArrHistogram.__subclasses__() }
+def find_subclasses(cls):
+    subclasses = []
+    to_check = [cls]
+    while to_check:
+        current = to_check.pop()
+        for subcl in current.__subclasses__():
+            if subcl not in subclasses:
+                subclasses.append(subcl)
+                to_check.append(subcl)
+    return list(subclasses)
+
+registered_varhists = { subcl.name: subcl for subcl in find_subclasses(VarArrHistogram) }
 
 
 
