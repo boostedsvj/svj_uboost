@@ -800,6 +800,12 @@ class ECFN2B2Histogram(VarArrHistogram):
     name = 'ecfn2b2'
     default_binning = (0.01, 0, 0.5)
 
+class ECFN2B2DarkHistogram(ECFN2B2Histogram):
+    name = 'ecfn2b2dark'
+
+class ECFN2B2GenHistogram(ECFN2B2Histogram):
+    name = 'ecfn2b2gen'
+
 class ECFM2B1Histogram(VarArrHistogram):
     name = 'ecfm2b1'
     default_binning = (0.005,0,0.2)
