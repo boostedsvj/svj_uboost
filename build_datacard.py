@@ -288,14 +288,19 @@ def build_all_histograms():
     selection = common.pull_arg('selection', type=str).selection
     hist_var_list = common.pull_arg("--hist_var_list", type=str, nargs='*', default=['mt']).hist_var_list
     fullyear = common.pull_arg('--fullyear', action="store_true", help='treat 2018 as one year instead of splitting into pre and post').fullyear
+    threads = common.pull_arg('--threads', type=int, default=None).threads
     skimdir = common.pull_arg('skimdir', type=str).skimdir
 
     skims = expand_wildcards(skimdir)
     for hist_var in hist_var_list:
         change_bin_width(hist_var)
-        with common.mp_pool() as p:
-            args =  [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
-            p.map(build_histogram, args)
+        args = [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
+        if threads==0:
+            for arg in args:
+                build_histogram(arg)
+        else:
+            with common.mp_pool(max_thread=threads) as p:
+                p.map(build_histogram, args)
 
 @scripter
 def merge_histograms():
