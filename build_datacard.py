@@ -180,9 +180,15 @@ def build_histogram(args=None):
 
     # process 2018 samples twice as PRE and POST
     if year=="2018" and not fullyear:
-        outfiles1 = build_histogram((selection,hist_var, None,"2018PRE",False,skimfile))
-        outfiles2 = build_histogram((selection,hist_var, None,"2018POST",False,skimfile))
+        outfiles1 = build_histogram((selection,hist_var,None,"2018PRE",False,skimfile))
+        outfiles2 = build_histogram((selection,hist_var,None,"2018POST",False,skimfile))
         return outfiles1+outfiles2
+
+    # extract options from selection
+    do_syst = True
+    if selection=="preselection_only":
+        selection = "preselection"
+        do_syst = False
 
     common.logger.info(f'Selection: {selection}')
     cen_columns = apply_selection(cen_columns,year)
@@ -201,7 +207,7 @@ def build_histogram(args=None):
         hist_central = hist_central.mask(common.mask_isolated_bins(hist_central.vals))
     hist_variants['central'] = hist_central
 
-    if metadata["sample_type"]=="sig" and selection!="preselection_minus":
+    if metadata["sample_type"]=="sig" and do_syst and selection!="preselection_minus":
         # Scale
         good_scales = np.array([0,1,2,3,4,6,8])
         scale_weight = cen_columns.to_numpy(['scaleweights'])
