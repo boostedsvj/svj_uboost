@@ -921,7 +921,7 @@ def systematics_table():
                     else:
                         asyst_list += [syst]
                 else:
-                    asyst.append(syst + get_sysyear(year))
+                    asyst_list.append(syst + get_sysyear(year))
             else:
                 asyst_list.append(syst)
 
