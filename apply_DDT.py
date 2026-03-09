@@ -219,7 +219,7 @@ def main():
             }
             im = ax.imshow(img_array, **im_show_kwargs)
             ax.figure.colorbar(im, label='DDT Map value')
-            ax.set_xlabel('$\\frac{m_{\\mathrm{T}}}{p_{\\mathrm{T}}}$')
+            ax.set_xlabel('$\\rho_{\\mathrm{T}}$')
             ax.set_ylabel('$p_{\\mathrm{T}}$ [GeV]')
             save_plot(plt, plt_name)
             plt.close()
@@ -293,7 +293,7 @@ def main():
             with np.errstate(divide='ignore', invalid='ignore') :
                 mT_eff = mT_after / mT_before
                 mT_eff[mT_after == 0] = np.nan
-            ax.plot(bin_centers, mT_eff, drawstyle='steps-mid', label=f'DDT({var_label} > {cuts})')
+            ax.plot(bin_centers, mT_eff, drawstyle='steps-mid', label=f'DDT({var_label} $>$ {cuts})')
         ax.set_ylabel('Bkg efficiency')
         save_mt_fig(ax, f'bkg_eff_vs_mT_{ana_label}')
 
