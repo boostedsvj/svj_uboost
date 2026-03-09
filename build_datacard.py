@@ -1045,7 +1045,6 @@ def systematics_table():
         year = meta['year']
         if isinstance(year, list): year = "merged"
         if not isinstance(year,str): year = str(int(year))
-
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
         central = mths['central']
@@ -1071,7 +1070,7 @@ def systematics_table():
                     else:
                         asyst_list += [syst]
                 else:
-                    asyst_list.append(syst + get_sysyear(year))
+                    asyst.append(syst + get_sysyear(year))
             else:
                 asyst_list.append(syst)
 
