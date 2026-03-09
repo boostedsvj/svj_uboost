@@ -996,8 +996,6 @@ def systematics_table():
     qtyrange = common.pull_arg('--qtyrange', metavar=("qty min max"), default=[], type=str, action='append', nargs=3).qtyrange
     minimum = common.pull_arg('--minimum', type=float, default=0.01, help="minimum value to display, smaller values rounded to 0").minimum
     skimdir = common.pull_arg('skimdir', type=str).skimdir
-    rinv_min = common.pull_arg("--rinv_min", type=float, default=0.2, help="Mininum value of rinv to include in computation").rinv_min
-    rinv_max = common.pull_arg("--rinv_max", type=float, default=0.8, help="Mininum value of rinv to include in computation").rinv_max
     skims = expand_wildcards(skimdir)
     change_bin_width(hist_var)
 
@@ -1031,7 +1029,6 @@ def systematics_table():
         meta = mths['central'].metadata
         year = meta['year']
         if not isinstance(year,str): year = str(int(year))
-        if meta["rinv"] < rinv_min or meta["rinv"] > rinv_max: continue
 
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
