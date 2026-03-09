@@ -264,7 +264,7 @@ python build_datacard.py plot_smooth \
 To generate a summary of the magnitude of the systematic uncertainties, run the following command:
 
 ```bash
-python build_datacard.py systematics_table 'hists_20260108/SVJ*_sel-rtcutbased_ddt=0.1_*.json'
+python build_datacard.py systematics_table --qtyrange rinv 0.2 0.8 'hists_20260108/SVJ*_sel-rtcutbased_ddt=0.1_*.json'
 ```
 
 By default, the systematics table will exclude samples with rinv smaller than 0.2 or greater than 0.8.
