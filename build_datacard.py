@@ -161,7 +161,7 @@ def build_histogram(args=None):
         elif selection.startswith('antiloosebdt='):
             cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,ddt_map_file=common.DDT_FILE_BDTBASED)
         elif selection.startswith('antiloosertbdt='):
-            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED)
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
@@ -533,7 +533,7 @@ def make_stat_combined(mths,sysyear):
 
 @scripter
 def plot_systematics():
-    yrange = common.pull_arg('--hist_var', type=str, default='mt').hist_var
+    hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     yrange = common.pull_arg('--yrange', type=float, nargs=2, default=None).yrange
     json_file = common.pull_arg('jsonfile', type=str).jsonfile
     change_bin_width(hist_var)
@@ -992,12 +992,14 @@ def printSigFigs(num,fig,maxdec):
 
 @scripter
 def systematics_table():
-    change_bin_width()
     hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     qtyrange = common.pull_arg('--qtyrange', metavar=("qty min max"), default=[], type=str, action='append', nargs=3).qtyrange
     minimum = common.pull_arg('--minimum', type=float, default=0.01, help="minimum value to display, smaller values rounded to 0").minimum
     skimdir = common.pull_arg('skimdir', type=str).skimdir
+    rinv_min = common.pull_arg("--rinv_min", type=float, default=0.2, help="Mininum value of rinv to include in computation").rinv_min
+    rinv_max = common.pull_arg("--rinv_max", type=float, default=0.8, help="Mininum value of rinv to include in computation").rinv_max
     skims = expand_wildcards(skimdir)
+    change_bin_width(hist_var)
 
     # set up qty range limitations
     qtyfilters = []
@@ -1006,7 +1008,7 @@ def systematics_table():
 
     # needs to be kept in sync w/ boostedsvj/svj_limits/boosted_fits.py:gen_datacard()
     flat_systs = {
-        'lumi': 1.6,
+        'lumi': 0.73,
         'trigger_cr': 2.0,
         'trigger_sim': 2.1,
     }
@@ -1029,12 +1031,12 @@ def systematics_table():
         meta = mths['central'].metadata
         year = meta['year']
         if not isinstance(year,str): year = str(int(year))
+        if meta["rinv"] < rinv_min or meta["rinv"] > rinv_max: continue
 
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
         central = mths['central']
         central_yield = get_yield(central)
-        #common.logger.info(f'central metadata:\n{meta}')
 
         passed = True
         for qf in qtyfilters:
