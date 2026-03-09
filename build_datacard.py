@@ -894,8 +894,8 @@ def systematics_table():
             mths = json.load(f, cls=common.Decoder)
         meta = mths['central'].metadata
         year = meta['year']
+        if isinstance(year, list): year = "merged"
         if not isinstance(year,str): year = str(int(year))
-
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
         central = mths['central']
@@ -912,20 +912,31 @@ def systematics_table():
         total = 0
         for syst in sorted(systs.keys()):
             syst_effect = 0
-            asyst = syst
+            asyst_list = []
             # uncorrelated systs stored with sysyear naming (for datacard creation)
-            if syst in unc_systs: asyst += get_sysyear(year)
-            if f'{asyst}_up' in mths:
-                syst_up_yield = get_yield(mths[f'{asyst}_up'])
-                syst_dn_yield = get_yield(mths[f'{asyst}_down'])
-                syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
-            elif syst in flat_systs:
-                syst_effect = flat_systs[syst]
+            if syst in unc_systs:
+                if year == "merged":
+                    if syst != "stat":
+                        asyst_list += [syst + y for y in ["2016", "2017", "2018"]]
+                    else:
+                        asyst_list += [syst]
+                else:
+                    asyst.append(syst + get_sysyear(year))
             else:
-                #common.logger.warning(f'could not find systematic: {syst}')
-                continue
-            update_effect(year,syst,syst_effect)
-            total += syst_effect**2
+                asyst_list.append(syst)
+
+            for asyst in asyst_list:
+                if f'{asyst}_up' in mths:
+                    syst_up_yield = get_yield(mths[f'{asyst}_up'])
+                    syst_dn_yield = get_yield(mths[f'{asyst}_down'])
+                    syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
+                elif syst in flat_systs:
+                    syst_effect = flat_systs[syst]
+                else:
+                    common.logger.warning(f'could not find systematic: {syst}')
+                    continue
+                update_effect(year,syst,syst_effect)
+                total += syst_effect**2
         total = np.sqrt(total)
         update_effect(year,"total",total)
 
@@ -942,13 +953,13 @@ def systematics_table():
     sigfig = 2
     maxdec = int(abs(np.log10(minimum)))
 
-    print(" & ".join(["Systematic"]+years)+r" \\")
+    print(" & ".join(["Systematic"]+list(syst_effects.keys()))+r" \\")
     print(r"\hline")
     def print_syst_row(syst):
         cols = [systs[syst]]
-        for year in years:
-            tmin = syst_effects[year][syst][0]
-            tmax = syst_effects[year][syst][1]
+        for era in syst_effects.keys():
+            tmin = syst_effects[era][syst][0]
+            tmax = syst_effects[era][syst][1]
             smin = printSigFigs(tmin,sigfig,maxdec)
             smax = printSigFigs(tmax,sigfig,maxdec)
             # don't bother to display a range if values are equal within precision
