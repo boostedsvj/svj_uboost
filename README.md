@@ -269,7 +269,6 @@ python build_datacard.py systematics_table --qtyrange rinv 0.2 0.8 'hists_202601
 
 By default, the systematics table should exclude samples with rinv smaller than 0.2 or greater than 0.8.
 
-
 ## Extras
 
 An additional function for checking the histogram json files is `ls`. However, this is not the most easy to read it provides a quick way to check for mistakes during file creation.
