@@ -224,11 +224,14 @@ def main():
             save_plot(plt, plt_name)
             plt.close()
 
-        for cut_val, (var_map, MT_PT_edges, PT_edges, RT_edges) in var_dict.items():
+        for cut_val, arrays in var_dict.items():
+            if cut_val == "metadata": continue
+            var_map, MT_PT_edges, PT_edges, RT_edges = arrays
             var_map =  np.array(var_map)
             plot_single(var_map[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
             plot_single(gaussian_filter(var_map[:,:,1], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
+                plot_single(var_map[:,:,0].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT_nosmear')
                 plot_single(gaussian_filter(var_map[:,:,0], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
@@ -342,22 +345,28 @@ def main():
         if ana_type != 'RT':
             fig, ax = simple_fig()
             all_ratios = []
+            all_uncs = []
             for cuts, scores in primary_var_ddt.items():
                 mask_above = (scores > 0) & rt_mask
                 mask_below = (scores < 0)
                 num_above, _ = np.histogram(mT[mask_above], bins=mT_bins, weights=bkg_weight[mask_above])
                 num_below, _ = np.histogram(mT[mask_below], bins=mT_bins, weights=bkg_weight[mask_below])
                 ratio = np.divide(num_above, num_below, out=np.zeros_like(num_above, dtype=float), where=num_below > 0)
+                unc = np.sqrt(1/num_above + 1/num_below)
                 all_ratios.append(ratio)
+                all_uncs.append(unc)
+                ax.fill_between(bin_centers, ratio + unc*ratio, ratio - unc*ratio, step="mid", alpha=0.2)
                 ax.step(bin_centers, ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
             ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
             save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_{ana_label}')
 
             fig, ax = simple_fig()
-            for cuts, ratio in zip(primary_var_ddt.keys(), all_ratios):
+            for cuts, ratio, unc in zip(primary_var_ddt.keys(), all_ratios, all_uncs):
                 # Compute average, ignoring empty bins
                 avg = np.nanmean(ratio[ratio > 0])  # or use np.mean with a mask
                 normalized_ratio = np.divide(ratio, avg, out=np.zeros_like(ratio), where=avg > 0)
+                print(unc, normalized_ratio, bin_centers)
+                ax.fill_between(bin_centers, normalized_ratio * (1+unc), normalized_ratio* (1 - unc), step='mid', alpha=0.1)
                 ax.step(bin_centers, normalized_ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
             ax.axhline(1.0, color='gray', linestyle='--', linewidth=1)
             ax.set_ylim(0.0, 2.0)
