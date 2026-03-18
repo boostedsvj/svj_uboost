@@ -267,14 +267,8 @@ To generate a summary of the magnitude of the systematic uncertainties, run the 
 python build_datacard.py systematics_table --qtyrange rinv 0.2 0.8 'hists_20260108/SVJ*_sel-rtcutbased_ddt=0.1_*.json'
 ```
 
-By default, the systematics table will exclude samples with rinv smaller than 0.2 or greater than 0.8.
+By default, the systematics table should exclude samples with rinv smaller than 0.2 or greater than 0.8.
 
-A table of systematic uncertainty yield effects can be made as follows:
-```bash
-python build_datacard.py systematics_table signal_name_cutbased_or_bdt_with_bkg_binwXY_rangeXYZ-XYZ.json
-```
-Currently, this function only handles one signal model at a time.
-It will be expanded to summarize across all signal models once the full scans are available.
 
 ## Extras
 
