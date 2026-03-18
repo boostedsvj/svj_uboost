@@ -693,7 +693,7 @@ def mask_isolated_bins(counts):
 
 def compute_bkg_isolatedevt_mask(mT):
     """
-    Given the mT array of background events from a single background sample, return a True/False array of 
+    Given the mT array of background events from a single background sample, return a True/False array of
     whether to keep the event. If the events appears in an isloated bin in the
     standard mT binning scheme. The event is rejected
     """
@@ -1142,6 +1142,13 @@ def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_nam
         print(f"Creating DDT 2D map for cut value {cut_val}, efficiency {percent}%")
         var_map, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
         var_dict[str(cut_val)] = (var_map.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
+
+    # Adding some generation informations
+    var_dict["metadata"] = {
+        "event_count": len(weight),
+        "sum_of_weight": float(np.sum(weight)),
+        "efficiency_map": { str(cut_val): float(percent) for cut_val, percent in zip(cut_vals, percents) }
+    }
 
     if ddt_name is None:
         ddt_name = 'ddt_' + str(var) + '_' + datetime.now().strftime('%Y%m%d') + '.json'
