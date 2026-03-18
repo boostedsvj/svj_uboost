@@ -578,14 +578,16 @@ def plot_bkg():
     do_signal = len(sig_json_file) > 0
 
     h = mths['bkg'].rebin(rebin).cut(mtmin,mtmax)
+    h_sum = np.sum(h.vals)
     binning = h.binning
     nbins = h.nbins
     zero = np.zeros(nbins)
 
-    with common.quick_ax() as ax:
+    with common.quick_ax(outfile=f"bkg_sel-{h.metadata['selection']}.pdf") as ax:
         # for bkg in ['zjets', 'wjets', 'ttjets', 'qcd']:
-        for bkg in ['qcd', 'ttjets', 'wjets', 'zjets']:
-            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=bkg)
+        for label, bkg in [("QCD", 'qcd'), ("TT+Jets", 'ttjets'), ("W+Jets", 'wjets'), ("Z+Jets", 'zjets')]:
+            fraction = np.sum(mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals) / h_sum * 100.
+            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=label+ f" ({fraction:.2f}\\%)")
             h.vals -= mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals
 
         if do_signal:
@@ -604,7 +606,7 @@ def plot_bkg():
         common.put_on_cmslabel(ax)
         ax.text(
             0.02, 0.02,
-            'Cut-based' if h.metadata['selection']=='cutbased' else 'BDT',
+            h.metadata['selection'],
             horizontalalignment='left',
             verticalalignment='bottom',
             transform=ax.transAxes,
