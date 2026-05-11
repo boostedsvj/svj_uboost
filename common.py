@@ -492,7 +492,8 @@ def get_event_weight(obj,lumi=None, noPU=False):
     if isinstance(obj,svj.Columns):
         if lumi is None:
             lumi = lumis[str(obj.metadata['year'])]
-
+        if obj.metadata['sample_type'] == 'data': # Early exit before accessing weight
+            return np.ones_like(obj.arrays['evt'], dtype=np.float32)
         tree_weights = obj.to_numpy(['weight']).ravel()
         puweights = obj.to_numpy(["puweight"]).ravel()
         puweights = np.ones_like(puweights) if noPU else puweights
@@ -510,14 +511,16 @@ def get_event_weight(obj,lumi=None, noPU=False):
         elif obj.metadata["sample_type"]=="bkg":
             if len(tree_weights)>0: logger.info(f'Event weight: {lumi}*{tree_weights[0]}*{puweights[0]} = {lumi*tree_weights[0]*puweights[0]}')
             return lumi*tree_weights*puweights
-        else: # data
-            return 1.0
 
     elif isinstance(obj,Histogram):
         return obj.metadata.get('event_weight',1)
 
     else:
         raise RuntimeError(f'Unknown weight method for object of class {type(obj).__name__}')
+
+
+SF_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+SF_FILE = 'models/jetvar_model_uncertainty.json'
 
 def get_single_event_weight(weights):
     if isinstance(weights,float) or isinstance(weights,int): return weights
@@ -1424,6 +1427,35 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
     cols.cutflow['loose_ddt(antibdt)'] = len(cols)
     return cols
+
+"""Calculating scale factor for jet variable modeling"""
+
+SF_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+SF_FILE = 'models/jetvar_model_uncertainty.json'
+
+def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
+    check_if_model_exists(sf_file, xrootd_url)
+    sf_container = json.load(open(sf_file, "r"))
+    var_bin = np.array(sf_container["ddt_bins"])
+    sf = np.array(sf_container["0.1"]["sf"]["val"])
+    stat_unc =  np.array(sf_container["0.1"]["sf"]["stat_unc"])
+    syst_unc =  np.array(sf_container["0.1"]["sf"]["syst_unc"])
+    unc = np.sqrt(stat_unc **2 + syst_unc**2)
+
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    ecf = cols.to_numpy(['ecfm2b1']).ravel()
+    m = np.ones_like(mT, dtype=bool)
+    ddt_val = calculate_varDDT(mT, pT, m, ecf, 0.1, DDT_FILE_BDTBASED_RT_DDT, smear=RT_DDT_SMEAR)
+
+    bin_idx = np.digitize(ddt_val, bins=var_bin)
+    if var == "cen":
+        return sf[bin_idx]
+    elif var == "up":
+        return sf[bin_idx] * (1+unc[bin_idx])
+    else:
+        return sf[bin_idx] * (1-unc[bin_idx])
+
 
 class InvalidSelectionException(Exception):
     def __init__(self, msg='Unknown selection {}; choices are "preselection", "cutbased", or "bdt=X.XXX".', sel="", *args, **kwargs):

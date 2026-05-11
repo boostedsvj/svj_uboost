@@ -195,6 +195,8 @@ def build_histogram(args=None):
     w = None
     if metadata["sample_type"] != "data":
         w = common.get_event_weight(cen_columns,lumi)
+        if metadata['sample_type'] == 'sig':
+            w *= common.get_model_sf(cen_columns, var="cen")
         metadata['event_weight'] = common.get_single_event_weight(w)
 
     # Defining the histogram type to use
@@ -223,7 +225,7 @@ def build_histogram(args=None):
         def mth_jerjecjes(tag):
             col = svj.Columns.load(get_variation(tag))
             col = apply_selection(col,year)
-            event_weight = common.get_event_weight(col,lumi)
+            event_weight = common.get_event_weight(col,lumi) * common.get_model_sf(col, var="cen")
             return VarHistogram(col, event_weight)
         # JER, JEC treated as uncorrelated between years (but 2018PRE, 2018POST always correlated)
         sysyear = get_sysyear(year)
@@ -260,6 +262,14 @@ def build_histogram(args=None):
         pdfw_down = np.clip(pdfw_down, a_min=0, a_max=None)
         hist_variants['pdf_up'] = VarHistogram(cen_columns, w*pdfw_up)
         hist_variants['pdf_down'] = VarHistogram(cen_columns, w*pdfw_down)
+
+        # Jet var modelling
+        jet_sf = common.get_model_sf(cen_columns, var="cen")
+        jet_sf_up = common.get_model_sf(cen_columns, var="up")
+        jet_sf_down = common.get_model_sf(cen_columns, var="down")
+        hist_variants["jetvar_up"] = VarHistogram(cen_columns, w * jet_sf_up / jet_sf)
+        hist_variants["jetvar_down"] = VarHistogram(cen_columns, w * jet_sf_down / jet_sf)
+        hist_variants["jetvar_none"] = VarHistogram(cen_columns, w / jet_sf)
 
         # MC stats
         mc_stat_err = np.sqrt(np.histogram(VarHistogram._create_var_array(cen_columns), bins=hist_central.binning, weights=w**2)[0])
@@ -493,6 +503,7 @@ def get_systs(names=False,years=["2016","2017","2018"],smooth=False):
         'fsr': "FSR (parton shower)",
         'pu': "Pileup reweighting",
         'pdf': "PDF",
+        'jetvar': "Model"
     }
     if smooth:
         syst_names.update({
@@ -561,6 +572,8 @@ def plot_systematics():
         plot.plot_hist(mths['central'], label='Central')
         plot.plot_hist(mths[f'{syst}_up'], mths['central'], f'{syst} up')
         plot.plot_hist(mths[f'{syst}_down'], mths['central'], f'{syst} down')
+        if syst == "jetvar":
+            plot.plot_hist(mths[f'{syst}_none'], mths['central'], f'{syst} none')
         if yrange is not None:
             plot.bot.set_ylim(yrange[0],yrange[1])
         plot.save(f'{outdir}/{syst}.png')
@@ -671,7 +684,7 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
         if not isinstance(year,str) and not isinstance(year,list): year = str(int(year))
         variations = get_systs(years=year)
         variations = [v for v in variations if not v.startswith('stat')]
-        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]
+        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]+["jetvar_none"]
         variations = [default]+variations
     else:
         variations = [default]
@@ -774,7 +787,7 @@ def plot_smooth():
     vars = [var]
     if var=='all':
         vars = get_systs()
-        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars]
+        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars] + ["jetvar_none"]
         vars = [default]+vars
 
     mths = []

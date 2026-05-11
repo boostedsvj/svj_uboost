@@ -137,7 +137,7 @@ def plot_results(results, ecf_cuts, plot_prefix):
         ax_lower.set_ylim(bottom=0.78, top=1.22)
         ax_lower.hlines([0.9,1.1], unc_bin[0], unc_bin[-1], color='gray')
         ax_lower.set_ylabel("Data/MC")
-        ax_lower.set_xlabel(r"$ECF^{DDT}$($\tilde{ECF}_{cut}$ = " + f"{cut})")
+        ax_lower.set_xlabel(r"$M_2^{DDT}$($\tilde{M}_{2,cut}$ = " + f"{cut})")
         fig.savefig(f"{plot_prefix}_{str(cut)}.pdf")
 
 
@@ -174,7 +174,7 @@ if __name__ == "__main__":
         '--ddt_bins',
         type=float,
         nargs='+',
-        default=np.linspace(-0.03, 0.03, 16),
+        default=np.linspace(-0.08, 0.08, 17),
         help="Binning scheme to use for the construction of the scale factors"
     )
     parser.add_argument(
