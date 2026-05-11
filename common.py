@@ -492,7 +492,8 @@ def get_event_weight(obj,lumi=None, noPU=False):
     if isinstance(obj,svj.Columns):
         if lumi is None:
             lumi = lumis[str(obj.metadata['year'])]
-
+        if obj.metadata['sample_type'] == 'data': # Early exit before accessing weight
+            return np.ones_like(obj.arrays['evt'], dtype=np.float32)
         tree_weights = obj.to_numpy(['weight']).ravel()
         puweights = obj.to_numpy(["puweight"]).ravel()
         puweights = np.ones_like(puweights) if noPU else puweights
@@ -1445,7 +1446,7 @@ def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
     pT = cols.to_numpy(['pt']).ravel()
     ecf = cols.to_numpy(['ecfm2b1']).ravel()
     m = np.ones_like(mT, dtype=bool)
-    ddt_val = calculate_varDDT(mT, pT, m, ecf, 0.1, DDT_FILE_CUTBASED_RT_DDT, smear=RT_DDT_SMEAR)
+    ddt_val = calculate_varDDT(mT, pT, m, ecf, 0.1, DDT_FILE_BDTBASED_RT_DDT, smear=RT_DDT_SMEAR)
 
     bin_idx = np.digitize(ddt_val, bins=var_bin)
     if var == "cen":
