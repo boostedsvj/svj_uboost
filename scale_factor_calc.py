@@ -174,7 +174,7 @@ if __name__ == "__main__":
         '--ddt_bins',
         type=float,
         nargs='+',
-        default=np.linspace(-0.08, 0.08, 17),
+        default=np.linspace(-0.05, 0.05, 21),
         help="Binning scheme to use for the construction of the scale factors"
     )
     parser.add_argument(
