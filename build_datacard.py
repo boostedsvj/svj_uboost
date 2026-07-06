@@ -628,12 +628,12 @@ def do_loess(hist,span,do_gcv=False):
             errs[i] = 1
     # 1sigma interval
     try:
-        pred, conf_int, gcv = loess(x, y, errs, deg=2, alpha=0.683, span=span)
+        pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
     except np.linalg.LinAlgError as err:
         gcv = 1e10
         print(err)
     if do_gcv:
-        return gcv
+        return gcv, q_rough
     else:
         return pred, conf_int
 
@@ -641,6 +641,9 @@ def do_loess(hist,span,do_gcv=False):
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
+    leak_max = common.pull_arg('--leakmax', type=float, default=1e-7, help="max allowed roughness leakage").leakmax
+    min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
+    gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.03, help="relative GCV tolerance").gcvtol
     do_opt = common.pull_arg('--optimize', type=int, default=0, help="optimize span value using n values").optimize
     default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
     target = common.pull_arg('--target', type=str, default=default, help="optimize only based on target hist").target
@@ -653,11 +656,32 @@ def smooth_shapes():
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        args = [(span_val, span_min, leak_max, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
 
-def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, leak_max, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+    # keep only regions with at least min_run consecutive True values
+    # (avoid one-point outliers)
+    def consec_true_mask(mask, min_run):
+        mask = np.asarray(mask, dtype=bool)
+        if min_run <= 1:
+            return mask
+        out = np.zeros_like(mask)
+        n = len(mask)
+        i = 0
+        while i < n:
+            if not mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and mask[j]:
+                j += 1
+            if j - i >= min_run:
+                out[i:j] = True
+            i = j
+        return out
+
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
     h_default = mths[default]
@@ -701,11 +725,34 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
 
         if do_opt>0 and (var==target or len(target)==0):
             spans = np.linspace(span_min,1.,do_opt,endpoint=False) # skip 1
-            gcvs = np.array([do_loess(hist, span, do_gcv=True) for span in spans])
-            span_val = spans[np.argmin(gcvs)]
-            if debug: print('\n'.join(['{} {}'.format(span,gcv) for span,gcv in zip(spans,gcvs)]))
+            scans = [do_loess(hist, span, do_gcv=True) for span in spans]
+            # list of pairs -> pair of lists
+            gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
+            # optimization procedure:
+            # 1. find spans w/ roughness_leakage < max
+            # 2. mask out fluctuations using min_run
+            # 3. pick smallest of these spans w/ gcv in tolerance
+            feasible = q_rough < leak_max
+            feasible = consec_true_mask(feasible, min_run)
+            if np.any(feasible):
+                best_feasible_gcv = np.min(gcvs[feasible])
+                feasible_indices = np.where(feasible)[0]
+                best_feasible_idx = np.argmin(gcvs[feasible])
+                best_feasible_gcv_span = spans[feasible_indices[best_feasible_idx]]
+                if debug: print(f"Best feasible gcv = {best_feasible_gcv} at span = {best_feasible_gcv_span}")
+                plateau = feasible & (gcvs < best_feasible_gcv*(1.0+gcv_tol))
+                chosen_idx = np.flatnonzero(plateau)[0]
+                if debug: print(f"Lowest feasible gcv = {gcvs[chosen_idx]} at span = {spans[chosen_idx]}")
+            else:
+                # no span suppressed MC roughness enough
+                # choose least-leaky span
+                chosen_idx = int(np.nanargmin(q_rough))
+                if debug: print("Warning: no feasible spans")
+            span_val = spans[chosen_idx]
+            if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
+            meta["q_rough"] = list(gcvs)
 
         pred, conf = do_loess(hist,span=span_val)
 
