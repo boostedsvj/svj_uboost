@@ -641,6 +641,7 @@ def do_loess(hist,span,do_gcv=False):
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
+    span_max = common.pull_arg('--spanmax', type=float, default=1.0, help="maximum span value").spanmax
     leak_tol = common.pull_arg('--leaktol', type=float, default=0.9, help="relative tolerance for roughness leakage knee").leaktol
     min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
     gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.03, help="relative GCV tolerance").gcvtol
@@ -656,11 +657,11 @@ def smooth_shapes():
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        args = [(span_val, span_min, span_max, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
 
-def smooth_shape_single(span_val, span_min, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
     def consec_true_mask(mask, min_run):
@@ -724,7 +725,7 @@ def smooth_shape_single(span_val, span_min, leak_tol, min_run, gcv_tol, do_opt, 
         if norm: hist = hist*(1./hyield)
 
         if do_opt>0 and (var==target or len(target)==0):
-            spans = np.linspace(span_min,1.,do_opt,endpoint=False) # skip 1
+            spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
             scans = [do_loess(hist, span, do_gcv=True) for span in spans]
             # list of pairs -> pair of lists
             gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
@@ -744,6 +745,7 @@ def smooth_shape_single(span_val, span_min, leak_tol, min_run, gcv_tol, do_opt, 
                 feasible = consec_true_mask(feasible_raw, min_run)
             # fallback: ignore consecutive run requirement
             if not np.any(feasible):
+                if debug: print("Warning: ignoring consecutive run requirement")
                 feasible = feasible_raw
             best_feasible_gcv = np.min(gcvs[feasible])
             feasible_indices = np.where(feasible)[0]
