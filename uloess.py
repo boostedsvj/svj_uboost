@@ -71,6 +71,48 @@ def leak_var(L, e):
         return np.nan
     return numer/denom
 
+def _finite_arr(*arrays):
+    mask = np.ones_like(np.asarray(arrays[0], dtype=float), dtype=bool)
+
+    for a in arrays:
+        a = np.asarray(a, dtype=float)
+        mask &= np.isfinite(a)
+
+    return mask
+
+# find "knee" for monotonically decreasing curve
+# by finding point w/ max distance from straight line connecting endpoints
+def knee(spans, q_rough, log_y=True):
+    debug = True
+    valid = _finite_arr(spans, q_rough)
+    s_valid = spans[valid]
+    q_valid = q_rough[valid]
+    order = np.argsort(s_valid)
+    s_sorted = s_valid[order]
+    q_sorted = q_valid[order]
+    qq = np.log(q_sorted) if log_y else q_sorted.copy()
+    # normalize to 0,1
+    s_range = s_sorted[-1] - s_sorted[0]
+    q_range = qq.max() - qq.min()
+    s_norm = (s_sorted - s_sorted[0]) / s_range
+    q_norm = (qq - qq.min()) / q_range
+    # chord
+    line = 1.0 - s_norm
+    distance = line - q_norm
+    # do not allow endpoints to be selected
+    distance[0] = -np.inf
+    distance[-1] = -np.inf
+    knee_local_sorted = int(np.nanargmax(distance))
+    # move back to original index
+    valid_indices = np.flatnonzero(valid)
+    sorted_original_indices = valid_indices[order]
+    knee_index = int(sorted_original_indices[knee_local_sorted])
+    if debug: print("index",knee_index)
+    if debug: print("distance",distance[knee_local_sorted])
+    if debug: print("span",spans[knee_index])
+    if debug: print("q_rough",q_rough[knee_index])
+    return knee_index
+
 # this follows "Locally Weighted Regression: An Approach to Regression Analysis by Local Fitting", W. Cleveland, S. Devlin
 def ci(x, y, e, y_pred, L, alpha):
     R = y-y_pred # residuals
