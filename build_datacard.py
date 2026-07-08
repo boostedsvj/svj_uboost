@@ -753,15 +753,24 @@ def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol
             feasible_indices = np.where(feasible)[0]
             best_feasible_idx = np.argmin(gcvs[feasible])
             best_feasible_gcv_span = spans[feasible_indices[best_feasible_idx]]
-            if debug: print(f"Best feasible gcv = {best_feasible_gcv} at span = {best_feasible_gcv_span}")
-            plateau = feasible & (gcvs < best_feasible_gcv*(1.0+gcv_tol))
-            chosen_idx = np.flatnonzero(plateau)[0]
-            if debug: print(f"Lowest feasible gcv = {gcvs[chosen_idx]} at span = {spans[chosen_idx]}")
+            if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
+            plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
+            plateau_mask = feasible & (gcvs < plateau_gcv)
+            chosen_idx = np.flatnonzero(plateau_mask)[0]
+            if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
             span_val = spans[chosen_idx]
             if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
-            meta["q_rough"] = list(gcvs)
+            meta["q_rough"] = list(q_rough)
+            meta["q_knee"] = q_knee
+            meta["q_thresh"] = q_thresh
+            meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
+            meta["best_feasible_gcv"] = best_feasible_gcv
+            meta["plateau_gcv"] = plateau_gcv
+            meta["span_min"] = span_min
+            meta["span_max"] = span_max
+            meta["span_pts"] = do_opt
 
         pred, conf = do_loess(hist,span=span_val)
 
@@ -840,7 +849,7 @@ def plot_smooth():
             if len(omit)>0: print("Omitting keys missing in {}: {}".format(json_file,', '.join(omit)))
 
     model_str = osp.basename(json_file).replace(".json","")
-    outdir = f'plot_smooth_{strftime("%Y%m%d")}_{model_str}'
+    outdir = f'plot_smooth_{strftime("%Y%m%d")}'
     os.makedirs(outdir, exist_ok=True)
 
     for var in vars:
@@ -871,7 +880,67 @@ def plot_smooth():
                 else:
                     plot.bot.plot(x,y/h_denom,color=line.get_color())
 
-        plot.save(f'{outdir}/{var}.png',legend_order=legend_order)
+        plot.save(f'{outdir}/{model_str}_{var}.png',legend_order=legend_order)
+
+
+@scripter
+def plot_span_opt_diagnostic():
+    default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
+    json_file = common.pull_arg('jsonfile', type=str).jsonfile
+
+    with open(json_file) as f:
+        mths = json.load(f, cls=common.Decoder)
+    h_default = mths[default]
+    meta = h_default.metadata
+
+    spans = np.linspace(meta["span_min"],meta["span_max"],int(meta["span_pts"]),endpoint=False)
+    feasible_spans = meta["feasible_spans"]
+    gcvs = meta["gcvs"]
+    best_gcv = meta["best_feasible_gcv"]
+    plateau_gcv = meta["plateau_gcv"]
+    q_rough = meta["q_rough"]
+    q_knee = meta["q_knee"]
+    q_thresh = meta["q_thresh"]
+
+    chosen = meta["span"]
+
+    fig, ax1 = plt.subplots()
+
+    ax1.plot(spans, gcvs, marker="o", color="blue", label="GCV")
+    ax1.axvline(chosen, linestyle='-', color="red", label="chosen span")
+    ax1.axhline(best_gcv, linestyle="--", color="blue", label="best GCV")
+    ax1.axhline(plateau_gcv, linestyle=":", color="blue", label="plateau GCV")
+    ax1.axvline(feasible_spans[0], linestyle="-.", color="black", label="feasible span range")
+    ax1.axvline(feasible_spans[1], linestyle="-.", color="black")
+    ax1.set_xlabel("span")
+    ax1.set_ylabel("GCV", color="blue")
+    ax1.set_yscale("log")
+    ax1.tick_params(axis='y', which='both', right=False, labelright=False)
+    ax1.tick_params(axis="y", which='both', labelcolor="blue", color="blue")
+    ax1.spines["left"].set_color("blue")
+    ax1.spines['left'].set_edgecolor("blue")
+
+    ax2 = ax1.twinx()
+    ax2.plot(spans, q_rough, marker="s", color="orange", label="roughness")
+    ax2.axhline(q_knee, linestyle="--", color="orange", label="knee")
+    ax2.axhline(q_thresh, linestyle=":", color="orange", label="relaxed")
+    ax2.set_yscale("log")
+    ax2.set_ylabel("roughness", color="orange")
+    ax2.tick_params(axis='y', which='both', left=False, labelleft=False)
+    ax2.tick_params(axis="y", which='both', labelcolor="orange", color="orange")
+    ax2.spines["right"].set_color("orange")
+    ax2.spines['left'].set_visible(False)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, frameon=True, framealpha=0.8, facecolor="white", edgecolor="black", loc="upper right")
+
+    model_str = osp.basename(json_file).replace(".json","")
+    outdir = f'plot_span_opt_diagnostic_{strftime("%Y%m%d")}'
+    os.makedirs(outdir, exist_ok=True)
+    outfile = f'{outdir}/{model_str}_{default}.png'
+    plt.savefig(outfile)
+
 
 def get_yield(hist):
     return hist.vals.sum()
