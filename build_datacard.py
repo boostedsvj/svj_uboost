@@ -642,9 +642,9 @@ def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
     span_max = common.pull_arg('--spanmax', type=float, default=0.5, help="maximum span value").spanmax
-    leak_tol = common.pull_arg('--leaktol', type=float, default=0.9, help="relative tolerance for roughness leakage knee").leaktol
+    leak_tol = common.pull_arg('--leaktol', type=float, default=1.0, help="relative tolerance for roughness leakage knee").leaktol
     min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
-    gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.03, help="relative GCV tolerance").gcvtol
+    gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.0, help="relative GCV tolerance").gcvtol
     do_opt = common.pull_arg('--optimize', type=int, default=0, help="optimize span value using n values").optimize
     default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
     target = common.pull_arg('--target', type=str, default=default, help="optimize only based on target hist").target
@@ -751,12 +751,15 @@ def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol
             if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
             best_feasible_gcv = np.min(gcvs[feasible])
             feasible_indices = np.where(feasible)[0]
-            best_feasible_idx = np.argmin(gcvs[feasible])
-            best_feasible_gcv_span = spans[feasible_indices[best_feasible_idx]]
+            best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+            best_feasible_gcv_span = spans[best_feasible_idx]
             if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
             plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
-            plateau_mask = feasible & (gcvs < plateau_gcv)
-            chosen_idx = np.flatnonzero(plateau_mask)[0]
+            if gcv_tol>0:
+                plateau_mask = feasible & (gcvs < plateau_gcv)
+                chosen_idx = np.flatnonzero(plateau_mask)[0]
+            else:
+                chosen_idx = best_feasible_idx
             if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
             span_val = spans[chosen_idx]
             if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
@@ -909,7 +912,7 @@ def plot_span_opt_diagnostic():
     ax1.plot(spans, gcvs, marker="o", color="blue", label="GCV")
     ax1.axvline(chosen, linestyle='-', color="red", label="chosen span")
     ax1.axhline(best_gcv, linestyle="--", color="blue", label="best GCV")
-    ax1.axhline(plateau_gcv, linestyle=":", color="blue", label="plateau GCV")
+    if plateau_gcv != best_gcv: ax1.axhline(plateau_gcv, linestyle=":", color="blue", label="plateau GCV")
     ax1.axvline(feasible_spans[0], linestyle="-.", color="black", label="feasible span range")
     ax1.axvline(feasible_spans[1], linestyle="-.", color="black")
     ax1.set_xlabel("span")
@@ -923,7 +926,7 @@ def plot_span_opt_diagnostic():
     ax2 = ax1.twinx()
     ax2.plot(spans, q_rough, marker="s", color="orange", label="roughness")
     ax2.axhline(q_knee, linestyle="--", color="orange", label="knee")
-    ax2.axhline(q_thresh, linestyle=":", color="orange", label="relaxed")
+    if q_thresh != q_knee: ax2.axhline(q_thresh, linestyle=":", color="orange", label="relaxed")
     ax2.set_yscale("log")
     ax2.set_ylabel("roughness", color="orange")
     ax2.tick_params(axis='y', which='both', left=False, labelleft=False)
