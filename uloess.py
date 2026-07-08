@@ -83,7 +83,6 @@ def _finite_arr(*arrays):
 # find "knee" for monotonically decreasing curve
 # by finding point w/ max distance from straight line connecting endpoints
 def knee(spans, q_rough, log_y=True):
-    debug = True
     valid = _finite_arr(spans, q_rough)
     s_valid = spans[valid]
     q_valid = q_rough[valid]
