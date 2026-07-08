@@ -740,13 +740,15 @@ def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol
             # this is equivalent to applying the tolerance to log(q_rough)
             q_thresh = q_knee**leak_tol
             if debug: print("q_thresh",q_thresh)
-            feasible_raw = q_rough <= q_thresh
+            # only allow tolerance to include smaller spans in feasible range, not larger ones
+            feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
             if min_run>1:
                 feasible = consec_true_mask(feasible_raw, min_run)
             # fallback: ignore consecutive run requirement
             if not np.any(feasible):
                 if debug: print("Warning: ignoring consecutive run requirement")
                 feasible = feasible_raw
+            if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
             best_feasible_gcv = np.min(gcvs[feasible])
             feasible_indices = np.where(feasible)[0]
             best_feasible_idx = np.argmin(gcvs[feasible])
