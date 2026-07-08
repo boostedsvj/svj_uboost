@@ -641,7 +641,7 @@ def do_loess(hist,span,do_gcv=False):
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
-    span_max = common.pull_arg('--spanmax', type=float, default=1.0, help="maximum span value").spanmax
+    span_max = common.pull_arg('--spanmax', type=float, default=0.5, help="maximum span value").spanmax
     leak_tol = common.pull_arg('--leaktol', type=float, default=0.9, help="relative tolerance for roughness leakage knee").leaktol
     min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
     gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.03, help="relative GCV tolerance").gcvtol
