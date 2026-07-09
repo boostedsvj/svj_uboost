@@ -628,12 +628,12 @@ def do_loess(hist,span,do_gcv=False):
             errs[i] = 1
     # 1sigma interval
     try:
-        pred, conf_int, gcv = loess(x, y, errs, deg=2, alpha=0.683, span=span)
+        pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
     except np.linalg.LinAlgError as err:
         gcv = 1e10
         print(err)
     if do_gcv:
-        return gcv
+        return gcv, q_rough
     else:
         return pred, conf_int
 
@@ -641,6 +641,11 @@ def do_loess(hist,span,do_gcv=False):
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
+    span_max = common.pull_arg('--spanmax', type=float, default=0.5, help="maximum span value").spanmax
+    simple = common.pull_arg('--simple', default=False, action="store_true", help="use simple GCV-based optimization, ignoring roughness").simple
+    leak_tol = common.pull_arg('--leaktol', type=float, default=1.0, help="relative tolerance for roughness leakage knee").leaktol
+    min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
+    gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.0, help="relative GCV tolerance").gcvtol
     do_opt = common.pull_arg('--optimize', type=int, default=0, help="optimize span value using n values").optimize
     default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
     target = common.pull_arg('--target', type=str, default=default, help="optimize only based on target hist").target
@@ -653,11 +658,32 @@ def smooth_shapes():
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
 
-def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+    # keep only regions with at least min_run consecutive True values
+    # (avoid one-point outliers)
+    def consec_true_mask(mask, min_run):
+        mask = np.asarray(mask, dtype=bool)
+        if min_run <= 1:
+            return mask
+        out = np.zeros_like(mask)
+        n = len(mask)
+        i = 0
+        while i < n:
+            if not mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and mask[j]:
+                j += 1
+            if j - i >= min_run:
+                out[i:j] = True
+            i = j
+        return out
+
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
     h_default = mths[default]
@@ -700,12 +726,60 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
         if norm: hist = hist*(1./hyield)
 
         if do_opt>0 and (var==target or len(target)==0):
-            spans = np.linspace(span_min,1.,do_opt,endpoint=False) # skip 1
-            gcvs = np.array([do_loess(hist, span, do_gcv=True) for span in spans])
-            span_val = spans[np.argmin(gcvs)]
-            if debug: print('\n'.join(['{} {}'.format(span,gcv) for span,gcv in zip(spans,gcvs)]))
+            spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
+            scans = [do_loess(hist, span, do_gcv=True) for span in spans]
+            # list of pairs -> pair of lists
+            gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
+            if simple:
+                span_val = spans[np.argmin(gcvs)]
+                if debug: print(f"Chosen span = {span_val}")
+            else:
+                # optimization procedure:
+                # 1. find "knee" where roughness_leakage stops decreasing rapidly
+                # 2. mask out fluctuations using min_run
+                # 3. pick smallest of these spans w/ gcv in tolerance
+                from uloess import knee
+                knee_index = knee(spans, q_rough, leak_tol)
+                span_knee = spans[knee_index]
+                q_knee = q_rough[knee_index]
+                # this is equivalent to applying the tolerance to log(q_rough)
+                q_thresh = q_knee**leak_tol
+                if debug: print("q_thresh",q_thresh)
+                # only allow tolerance to include smaller spans in feasible range, not larger ones
+                feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
+                if min_run>1:
+                    feasible = consec_true_mask(feasible_raw, min_run)
+                # fallback: ignore consecutive run requirement
+                if not np.any(feasible):
+                    if debug: print("Warning: ignoring consecutive run requirement")
+                    feasible = feasible_raw
+                if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
+                best_feasible_gcv = np.min(gcvs[feasible])
+                feasible_indices = np.where(feasible)[0]
+                best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+                best_feasible_gcv_span = spans[best_feasible_idx]
+                if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
+                plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
+                if gcv_tol>0:
+                    plateau_mask = feasible & (gcvs < plateau_gcv)
+                    chosen_idx = np.flatnonzero(plateau_mask)[0]
+                else:
+                    chosen_idx = best_feasible_idx
+                if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
+                span_val = spans[chosen_idx]
+            if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
+            if not simple:
+                meta["q_rough"] = list(q_rough)
+                meta["q_knee"] = q_knee
+                meta["q_thresh"] = q_thresh
+                meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
+                meta["best_feasible_gcv"] = best_feasible_gcv
+                meta["plateau_gcv"] = plateau_gcv
+            meta["span_min"] = span_min
+            meta["span_max"] = span_max
+            meta["span_pts"] = do_opt
 
         pred, conf = do_loess(hist,span=span_val)
 
@@ -784,7 +858,7 @@ def plot_smooth():
             if len(omit)>0: print("Omitting keys missing in {}: {}".format(json_file,', '.join(omit)))
 
     model_str = osp.basename(json_file).replace(".json","")
-    outdir = f'plot_smooth_{strftime("%Y%m%d")}_{model_str}'
+    outdir = f'plot_smooth_{strftime("%Y%m%d")}'
     os.makedirs(outdir, exist_ok=True)
 
     for var in vars:
@@ -815,7 +889,67 @@ def plot_smooth():
                 else:
                     plot.bot.plot(x,y/h_denom,color=line.get_color())
 
-        plot.save(f'{outdir}/{var}.png',legend_order=legend_order)
+        plot.save(f'{outdir}/{model_str}_{var}.png',legend_order=legend_order)
+
+
+@scripter
+def plot_span_opt_diagnostic():
+    default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
+    json_file = common.pull_arg('jsonfile', type=str).jsonfile
+
+    with open(json_file) as f:
+        mths = json.load(f, cls=common.Decoder)
+    h_default = mths[default]
+    meta = h_default.metadata
+
+    spans = np.linspace(meta["span_min"],meta["span_max"],int(meta["span_pts"]),endpoint=False)
+    feasible_spans = meta["feasible_spans"]
+    gcvs = meta["gcvs"]
+    best_gcv = meta["best_feasible_gcv"]
+    plateau_gcv = meta["plateau_gcv"]
+    q_rough = meta["q_rough"]
+    q_knee = meta["q_knee"]
+    q_thresh = meta["q_thresh"]
+
+    chosen = meta["span"]
+
+    fig, ax1 = plt.subplots()
+
+    ax1.plot(spans, gcvs, marker="o", color="blue", label="GCV")
+    ax1.axvline(chosen, linestyle='-', color="red", label="chosen span")
+    ax1.axhline(best_gcv, linestyle="--", color="blue", label="best GCV")
+    if plateau_gcv != best_gcv: ax1.axhline(plateau_gcv, linestyle=":", color="blue", label="plateau GCV")
+    ax1.axvline(feasible_spans[0], linestyle="-.", color="black", label="feasible span range")
+    ax1.axvline(feasible_spans[1], linestyle="-.", color="black")
+    ax1.set_xlabel("span")
+    ax1.set_ylabel("GCV", color="blue")
+    ax1.set_yscale("log")
+    ax1.tick_params(axis='y', which='both', right=False, labelright=False)
+    ax1.tick_params(axis="y", which='both', labelcolor="blue", color="blue")
+    ax1.spines["left"].set_color("blue")
+    ax1.spines['left'].set_edgecolor("blue")
+
+    ax2 = ax1.twinx()
+    ax2.plot(spans, q_rough, marker="s", color="orange", label="roughness")
+    ax2.axhline(q_knee, linestyle="--", color="orange", label="knee")
+    if q_thresh != q_knee: ax2.axhline(q_thresh, linestyle=":", color="orange", label="relaxed")
+    ax2.set_yscale("log")
+    ax2.set_ylabel("roughness", color="orange")
+    ax2.tick_params(axis='y', which='both', left=False, labelleft=False)
+    ax2.tick_params(axis="y", which='both', labelcolor="orange", color="orange")
+    ax2.spines["right"].set_color("orange")
+    ax2.spines['left'].set_visible(False)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, frameon=True, framealpha=0.8, facecolor="white", edgecolor="black", loc="upper right")
+
+    model_str = osp.basename(json_file).replace(".json","")
+    outdir = f'plot_span_opt_diagnostic_{strftime("%Y%m%d")}'
+    os.makedirs(outdir, exist_ok=True)
+    outfile = f'{outdir}/{model_str}_{default}.png'
+    plt.savefig(outfile)
+
 
 def get_yield(hist):
     return hist.vals.sum()
