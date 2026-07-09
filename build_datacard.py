@@ -642,6 +642,7 @@ def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
     span_max = common.pull_arg('--spanmax', type=float, default=0.5, help="maximum span value").spanmax
+    simple = common.pull_arg('--simple', default=False, action="store_true", help="use simple GCV-based optimization, ignoring roughness").simple
     leak_tol = common.pull_arg('--leaktol', type=float, default=1.0, help="relative tolerance for roughness leakage knee").leaktol
     min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
     gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.0, help="relative GCV tolerance").gcvtol
@@ -657,11 +658,11 @@ def smooth_shapes():
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
 
-def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
     def consec_true_mask(mask, min_run):
@@ -729,48 +730,53 @@ def smooth_shape_single(span_val, span_min, span_max, leak_tol, min_run, gcv_tol
             scans = [do_loess(hist, span, do_gcv=True) for span in spans]
             # list of pairs -> pair of lists
             gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
-            # optimization procedure:
-            # 1. find "knee" where roughness_leakage stops decreasing rapidly
-            # 2. mask out fluctuations using min_run
-            # 3. pick smallest of these spans w/ gcv in tolerance
-            from uloess import knee
-            knee_index = knee(spans, q_rough, leak_tol)
-            span_knee = spans[knee_index]
-            q_knee = q_rough[knee_index]
-            # this is equivalent to applying the tolerance to log(q_rough)
-            q_thresh = q_knee**leak_tol
-            if debug: print("q_thresh",q_thresh)
-            # only allow tolerance to include smaller spans in feasible range, not larger ones
-            feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
-            if min_run>1:
-                feasible = consec_true_mask(feasible_raw, min_run)
-            # fallback: ignore consecutive run requirement
-            if not np.any(feasible):
-                if debug: print("Warning: ignoring consecutive run requirement")
-                feasible = feasible_raw
-            if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
-            best_feasible_gcv = np.min(gcvs[feasible])
-            feasible_indices = np.where(feasible)[0]
-            best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
-            best_feasible_gcv_span = spans[best_feasible_idx]
-            if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
-            plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
-            if gcv_tol>0:
-                plateau_mask = feasible & (gcvs < plateau_gcv)
-                chosen_idx = np.flatnonzero(plateau_mask)[0]
+            if simple:
+                span_val = spans[np.argmin(gcvs)]
+                if debug: print(f"Chosen span = {span_val}")
             else:
-                chosen_idx = best_feasible_idx
-            if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
-            span_val = spans[chosen_idx]
+                # optimization procedure:
+                # 1. find "knee" where roughness_leakage stops decreasing rapidly
+                # 2. mask out fluctuations using min_run
+                # 3. pick smallest of these spans w/ gcv in tolerance
+                from uloess import knee
+                knee_index = knee(spans, q_rough, leak_tol)
+                span_knee = spans[knee_index]
+                q_knee = q_rough[knee_index]
+                # this is equivalent to applying the tolerance to log(q_rough)
+                q_thresh = q_knee**leak_tol
+                if debug: print("q_thresh",q_thresh)
+                # only allow tolerance to include smaller spans in feasible range, not larger ones
+                feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
+                if min_run>1:
+                    feasible = consec_true_mask(feasible_raw, min_run)
+                # fallback: ignore consecutive run requirement
+                if not np.any(feasible):
+                    if debug: print("Warning: ignoring consecutive run requirement")
+                    feasible = feasible_raw
+                if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
+                best_feasible_gcv = np.min(gcvs[feasible])
+                feasible_indices = np.where(feasible)[0]
+                best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+                best_feasible_gcv_span = spans[best_feasible_idx]
+                if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
+                plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
+                if gcv_tol>0:
+                    plateau_mask = feasible & (gcvs < plateau_gcv)
+                    chosen_idx = np.flatnonzero(plateau_mask)[0]
+                else:
+                    chosen_idx = best_feasible_idx
+                if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
+                span_val = spans[chosen_idx]
             if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
-            meta["q_rough"] = list(q_rough)
-            meta["q_knee"] = q_knee
-            meta["q_thresh"] = q_thresh
-            meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
-            meta["best_feasible_gcv"] = best_feasible_gcv
-            meta["plateau_gcv"] = plateau_gcv
+            if not simple:
+                meta["q_rough"] = list(q_rough)
+                meta["q_knee"] = q_knee
+                meta["q_thresh"] = q_thresh
+                meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
+                meta["best_feasible_gcv"] = best_feasible_gcv
+                meta["plateau_gcv"] = plateau_gcv
             meta["span_min"] = span_min
             meta["span_max"] = span_max
             meta["span_pts"] = do_opt
