@@ -238,6 +238,38 @@ python3 build_datacard.py build_all_histograms preselection_minus "root://cmseos
 python3 build_datacard.py merge_histograms preselection_minus-rt hists_[date] --cat sig --hist_var rt --years 2016 2017 2018
 ```
 
+## Systematic uncertainties
+
+Systematic variants of the histograms of ths signal samples are already created
+in the `build_datacard build_all_histogram` sub-script. To generate the plots
+to display the magnitude of the uncertainties for a specific samples, run the
+following command:
+
+```bash
+python3 build_datacard.py plot_systematics ./merged_20260108/SVJ_s-channel_mMed-350_mDark-10_rinv-0p3_alpha-peak_MADPT300_13TeV-madgraphMLM-pythia8_sel-rtcutbased_ddt=0.1_mt.json
+```
+
+Using the merged histogram plots the combination of all data collection eras.
+The only systematic variation that is not included in this script is the
+results of the smoothing algorithm. To plot the differences of the smoothing
+algorithm, run the following command:
+
+```bash
+python build_datacard.py plot_smooth \
+   ./merged_20260108/SVJ_s-channel_mMed-350_mDark-10_rinv-0p3_alpha-peak_MADPT300_13TeV-madgraphMLM-pythia8_sel-rtcutbased_ddt=0.1_mt.json \
+   ./smooth_20260108/SVJ_s-channel_mMed-350_mDark-10_rinv-0p3_alpha-peak_MADPT300_13TeV-madgraphMLM-pythia8_sel-rtcutbased_ddt=0.1_mt_smooth.json \
+   --names "merged" "smoothed"
+```
+
+To generate a summary of the magnitude of the systematic uncertainties, run the following command:
+
+```bash
+python build_datacard.py systematics_table --qtyrange rinv 0.2 0.8 'hists_20260108/SVJ*_sel-rtcutbased_ddt=0.1_*.json'
+```
+
+By default, the systematics table should exclude samples with rinv smaller than 0.2 or greater than 0.8.
+
+
 ## Extras
 
 An additional function for checking the histogram json files is `ls`. However, this is not the most easy to read it provides a quick way to check for mistakes during file creation.
@@ -248,20 +280,6 @@ python3 build_datacard.py ls signal_name_cutbased_or_bdt_with_bkg_binwXY_rangeXY
 head -n 100 signal_name_cutbased_or_bdt_with_bkg_binwXY_rangeXYZ-XYZ.json
 ```
 
-Then all the up, down, and nominal values can be plotted for the systematics:
-
-```bash
-python build_datacard.py plot_systematics signal_name_cutbased_or_bdt_with_bkg_binwXY_rangeXYZ-XYZ.json
-```
-
-Similar plots can be made to compare the results of smoothing (e.g. for systematics, between different `keep` percentages, etc.) using the `plot_smooth` function.
-
-A table of systematic uncertainty yield effects can be made as follows:
-```bash
-python build_datacard.py systematics_table signal_name_cutbased_or_bdt_with_bkg_binwXY_rangeXYZ-XYZ.json
-```
-Currently, this function only handles one signal model at a time.
-It will be expanded to summarize across all signal models once the full scans are available.
 
 And that's it for this part. To use these histograms for fits and limit setting, see the [svj_limits](https://github.com/boostedsvj/svj_limits) repo.
 

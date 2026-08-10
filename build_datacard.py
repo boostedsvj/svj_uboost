@@ -161,7 +161,7 @@ def build_histogram(args=None):
         elif selection.startswith('antiloosebdt='):
             cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,ddt_map_file=common.DDT_FILE_BDTBASED)
         elif selection.startswith('antiloosertbdt='):
-            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED)
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
@@ -195,6 +195,8 @@ def build_histogram(args=None):
     w = None
     if metadata["sample_type"] != "data":
         w = common.get_event_weight(cen_columns,lumi)
+        if metadata['sample_type'] == 'sig':
+            w *= common.get_model_sf(cen_columns, var="cen")
         metadata['event_weight'] = common.get_single_event_weight(w)
 
     # Defining the histogram type to use
@@ -223,7 +225,7 @@ def build_histogram(args=None):
         def mth_jerjecjes(tag):
             col = svj.Columns.load(get_variation(tag))
             col = apply_selection(col,year)
-            event_weight = common.get_event_weight(col,lumi)
+            event_weight = common.get_event_weight(col,lumi) * common.get_model_sf(col, var="cen")
             return VarHistogram(col, event_weight)
         # JER, JEC treated as uncorrelated between years (but 2018PRE, 2018POST always correlated)
         sysyear = get_sysyear(year)
@@ -260,6 +262,14 @@ def build_histogram(args=None):
         pdfw_down = np.clip(pdfw_down, a_min=0, a_max=None)
         hist_variants['pdf_up'] = VarHistogram(cen_columns, w*pdfw_up)
         hist_variants['pdf_down'] = VarHistogram(cen_columns, w*pdfw_down)
+
+        # Jet var modelling
+        jet_sf = common.get_model_sf(cen_columns, var="cen")
+        jet_sf_up = common.get_model_sf(cen_columns, var="up")
+        jet_sf_down = common.get_model_sf(cen_columns, var="down")
+        hist_variants["jetvar_up"] = VarHistogram(cen_columns, w * jet_sf_up / jet_sf)
+        hist_variants["jetvar_down"] = VarHistogram(cen_columns, w * jet_sf_down / jet_sf)
+        hist_variants["jetvar_none"] = VarHistogram(cen_columns, w / jet_sf)
 
         # MC stats
         mc_stat_err = np.sqrt(np.histogram(VarHistogram._create_var_array(cen_columns), bins=hist_central.binning, weights=w**2)[0])
@@ -493,6 +503,7 @@ def get_systs(names=False,years=["2016","2017","2018"],smooth=False):
         'fsr': "FSR (parton shower)",
         'pu': "Pileup reweighting",
         'pdf': "PDF",
+        'jetvar': "Model"
     }
     if smooth:
         syst_names.update({
@@ -533,7 +544,7 @@ def make_stat_combined(mths,sysyear):
 
 @scripter
 def plot_systematics():
-    yrange = common.pull_arg('--hist_var', type=str, default='mt').hist_var
+    hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     yrange = common.pull_arg('--yrange', type=float, nargs=2, default=None).yrange
     json_file = common.pull_arg('jsonfile', type=str).jsonfile
     change_bin_width(hist_var)
@@ -561,6 +572,8 @@ def plot_systematics():
         plot.plot_hist(mths['central'], label='Central')
         plot.plot_hist(mths[f'{syst}_up'], mths['central'], f'{syst} up')
         plot.plot_hist(mths[f'{syst}_down'], mths['central'], f'{syst} down')
+        if syst == "jetvar":
+            plot.plot_hist(mths[f'{syst}_none'], mths['central'], f'{syst} none')
         if yrange is not None:
             plot.bot.set_ylim(yrange[0],yrange[1])
         plot.save(f'{outdir}/{syst}.png')
@@ -578,14 +591,16 @@ def plot_bkg():
     do_signal = len(sig_json_file) > 0
 
     h = mths['bkg'].rebin(rebin).cut(mtmin,mtmax)
+    h_sum = np.sum(h.vals)
     binning = h.binning
     nbins = h.nbins
     zero = np.zeros(nbins)
 
-    with common.quick_ax() as ax:
+    with common.quick_ax(outfile=f"bkg_sel-{h.metadata['selection']}.pdf") as ax:
         # for bkg in ['zjets', 'wjets', 'ttjets', 'qcd']:
-        for bkg in ['qcd', 'ttjets', 'wjets', 'zjets']:
-            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=bkg)
+        for label, bkg in [("QCD", 'qcd'), ("TT+Jets", 'ttjets'), ("W+Jets", 'wjets'), ("Z+Jets", 'zjets')]:
+            fraction = np.sum(mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals) / h_sum * 100.
+            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=label+ f" ({fraction:.2f}\\%)")
             h.vals -= mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals
 
         if do_signal:
@@ -604,7 +619,7 @@ def plot_bkg():
         common.put_on_cmslabel(ax)
         ax.text(
             0.02, 0.02,
-            'Cut-based' if h.metadata['selection']=='cutbased' else 'BDT',
+            h.metadata['selection'],
             horizontalalignment='left',
             verticalalignment='bottom',
             transform=ax.transAxes,
@@ -628,12 +643,12 @@ def do_loess(hist,span,do_gcv=False):
             errs[i] = 1
     # 1sigma interval
     try:
-        pred, conf_int, gcv = loess(x, y, errs, deg=2, alpha=0.683, span=span)
+        pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
     except np.linalg.LinAlgError as err:
         gcv = 1e10
         print(err)
     if do_gcv:
-        return gcv
+        return gcv, q_rough
     else:
         return pred, conf_int
 
@@ -641,6 +656,11 @@ def do_loess(hist,span,do_gcv=False):
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
     span_min = common.pull_arg('--spanmin', type=float, default=0.05, help="minimum span value").spanmin # if span is too small, no points are included
+    span_max = common.pull_arg('--spanmax', type=float, default=0.5, help="maximum span value").spanmax
+    simple = common.pull_arg('--simple', default=False, action="store_true", help="use simple GCV-based optimization, ignoring roughness").simple
+    leak_tol = common.pull_arg('--leaktol', type=float, default=1.0, help="relative tolerance for roughness leakage knee").leaktol
+    min_run = common.pull_arg('--minrun', type=float, default=2, help="min consecutive spans with roughness leakage < max").minrun
+    gcv_tol = common.pull_arg('--gcvtol', type=float, default=0.0, help="relative GCV tolerance").gcvtol
     do_opt = common.pull_arg('--optimize', type=int, default=0, help="optimize span value using n values").optimize
     default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
     target = common.pull_arg('--target', type=str, default=default, help="optimize only based on target hist").target
@@ -653,11 +673,32 @@ def smooth_shapes():
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
 
-def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+    # keep only regions with at least min_run consecutive True values
+    # (avoid one-point outliers)
+    def consec_true_mask(mask, min_run):
+        mask = np.asarray(mask, dtype=bool)
+        if min_run <= 1:
+            return mask
+        out = np.zeros_like(mask)
+        n = len(mask)
+        i = 0
+        while i < n:
+            if not mask[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and mask[j]:
+                j += 1
+            if j - i >= min_run:
+                out[i:j] = True
+            i = j
+        return out
+
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
     h_default = mths[default]
@@ -669,7 +710,7 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
         if not isinstance(year,str) and not isinstance(year,list): year = str(int(year))
         variations = get_systs(years=year)
         variations = [v for v in variations if not v.startswith('stat')]
-        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]
+        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]+["jetvar_none"]
         variations = [default]+variations
     else:
         variations = [default]
@@ -700,12 +741,60 @@ def smooth_shape_single(span_val, span_min, do_opt, default, target, debug, var,
         if norm: hist = hist*(1./hyield)
 
         if do_opt>0 and (var==target or len(target)==0):
-            spans = np.linspace(span_min,1.,do_opt,endpoint=False) # skip 1
-            gcvs = np.array([do_loess(hist, span, do_gcv=True) for span in spans])
-            span_val = spans[np.argmin(gcvs)]
-            if debug: print('\n'.join(['{} {}'.format(span,gcv) for span,gcv in zip(spans,gcvs)]))
+            spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
+            scans = [do_loess(hist, span, do_gcv=True) for span in spans]
+            # list of pairs -> pair of lists
+            gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
+            if simple:
+                span_val = spans[np.argmin(gcvs)]
+                if debug: print(f"Chosen span = {span_val}")
+            else:
+                # optimization procedure:
+                # 1. find "knee" where roughness_leakage stops decreasing rapidly
+                # 2. mask out fluctuations using min_run
+                # 3. pick smallest of these spans w/ gcv in tolerance
+                from uloess import knee
+                knee_index = knee(spans, q_rough, leak_tol)
+                span_knee = spans[knee_index]
+                q_knee = q_rough[knee_index]
+                # this is equivalent to applying the tolerance to log(q_rough)
+                q_thresh = q_knee**leak_tol
+                if debug: print("q_thresh",q_thresh)
+                # only allow tolerance to include smaller spans in feasible range, not larger ones
+                feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
+                if min_run>1:
+                    feasible = consec_true_mask(feasible_raw, min_run)
+                # fallback: ignore consecutive run requirement
+                if not np.any(feasible):
+                    if debug: print("Warning: ignoring consecutive run requirement")
+                    feasible = feasible_raw
+                if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
+                best_feasible_gcv = np.min(gcvs[feasible])
+                feasible_indices = np.where(feasible)[0]
+                best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+                best_feasible_gcv_span = spans[best_feasible_idx]
+                if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
+                plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
+                if gcv_tol>0:
+                    plateau_mask = feasible & (gcvs < plateau_gcv)
+                    chosen_idx = np.flatnonzero(plateau_mask)[0]
+                else:
+                    chosen_idx = best_feasible_idx
+                if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
+                span_val = spans[chosen_idx]
+            if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
             meta["span"] = span_val
             meta["gcvs"] = list(gcvs)
+            if not simple:
+                meta["q_rough"] = list(q_rough)
+                meta["q_knee"] = q_knee
+                meta["q_thresh"] = q_thresh
+                meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
+                meta["best_feasible_gcv"] = best_feasible_gcv
+                meta["plateau_gcv"] = plateau_gcv
+            meta["span_min"] = span_min
+            meta["span_max"] = span_max
+            meta["span_pts"] = do_opt
 
         pred, conf = do_loess(hist,span=span_val)
 
@@ -772,7 +861,7 @@ def plot_smooth():
     vars = [var]
     if var=='all':
         vars = get_systs()
-        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars]
+        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars] + ["jetvar_none"]
         vars = [default]+vars
 
     mths = []
@@ -784,7 +873,7 @@ def plot_smooth():
             if len(omit)>0: print("Omitting keys missing in {}: {}".format(json_file,', '.join(omit)))
 
     model_str = osp.basename(json_file).replace(".json","")
-    outdir = f'plot_smooth_{strftime("%Y%m%d")}_{model_str}'
+    outdir = f'plot_smooth_{strftime("%Y%m%d")}'
     os.makedirs(outdir, exist_ok=True)
 
     for var in vars:
@@ -815,7 +904,67 @@ def plot_smooth():
                 else:
                     plot.bot.plot(x,y/h_denom,color=line.get_color())
 
-        plot.save(f'{outdir}/{var}.png',legend_order=legend_order)
+        plot.save(f'{outdir}/{model_str}_{var}.png',legend_order=legend_order)
+
+
+@scripter
+def plot_span_opt_diagnostic():
+    default = common.pull_arg('--default', type=str, default='central', help="default histogram for metadata").default
+    json_file = common.pull_arg('jsonfile', type=str).jsonfile
+
+    with open(json_file) as f:
+        mths = json.load(f, cls=common.Decoder)
+    h_default = mths[default]
+    meta = h_default.metadata
+
+    spans = np.linspace(meta["span_min"],meta["span_max"],int(meta["span_pts"]),endpoint=False)
+    feasible_spans = meta["feasible_spans"]
+    gcvs = meta["gcvs"]
+    best_gcv = meta["best_feasible_gcv"]
+    plateau_gcv = meta["plateau_gcv"]
+    q_rough = meta["q_rough"]
+    q_knee = meta["q_knee"]
+    q_thresh = meta["q_thresh"]
+
+    chosen = meta["span"]
+
+    fig, ax1 = plt.subplots()
+
+    ax1.plot(spans, gcvs, marker="o", color="blue", label="GCV")
+    ax1.axvline(chosen, linestyle='-', color="red", label="chosen span")
+    ax1.axhline(best_gcv, linestyle="--", color="blue", label="best GCV")
+    if plateau_gcv != best_gcv: ax1.axhline(plateau_gcv, linestyle=":", color="blue", label="plateau GCV")
+    ax1.axvline(feasible_spans[0], linestyle="-.", color="black", label="feasible span range")
+    ax1.axvline(feasible_spans[1], linestyle="-.", color="black")
+    ax1.set_xlabel("span")
+    ax1.set_ylabel("GCV", color="blue")
+    ax1.set_yscale("log")
+    ax1.tick_params(axis='y', which='both', right=False, labelright=False)
+    ax1.tick_params(axis="y", which='both', labelcolor="blue", color="blue")
+    ax1.spines["left"].set_color("blue")
+    ax1.spines['left'].set_edgecolor("blue")
+
+    ax2 = ax1.twinx()
+    ax2.plot(spans, q_rough, marker="s", color="orange", label="roughness")
+    ax2.axhline(q_knee, linestyle="--", color="orange", label="knee")
+    if q_thresh != q_knee: ax2.axhline(q_thresh, linestyle=":", color="orange", label="relaxed")
+    ax2.set_yscale("log")
+    ax2.set_ylabel("roughness", color="orange")
+    ax2.tick_params(axis='y', which='both', left=False, labelleft=False)
+    ax2.tick_params(axis="y", which='both', labelcolor="orange", color="orange")
+    ax2.spines["right"].set_color("orange")
+    ax2.spines['left'].set_visible(False)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, frameon=True, framealpha=0.8, facecolor="white", edgecolor="black", loc="upper right")
+
+    model_str = osp.basename(json_file).replace(".json","")
+    outdir = f'plot_span_opt_diagnostic_{strftime("%Y%m%d")}'
+    os.makedirs(outdir, exist_ok=True)
+    outfile = f'{outdir}/{model_str}_{default}.png'
+    plt.savefig(outfile)
+
 
 def get_yield(hist):
     return hist.vals.sum()
@@ -858,12 +1007,12 @@ def printSigFigs(num,fig,maxdec):
 
 @scripter
 def systematics_table():
-    change_bin_width()
     hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     qtyrange = common.pull_arg('--qtyrange', metavar=("qty min max"), default=[], type=str, action='append', nargs=3).qtyrange
     minimum = common.pull_arg('--minimum', type=float, default=0.01, help="minimum value to display, smaller values rounded to 0").minimum
     skimdir = common.pull_arg('skimdir', type=str).skimdir
     skims = expand_wildcards(skimdir)
+    change_bin_width(hist_var)
 
     # set up qty range limitations
     qtyfilters = []
@@ -872,7 +1021,7 @@ def systematics_table():
 
     # needs to be kept in sync w/ boostedsvj/svj_limits/boosted_fits.py:gen_datacard()
     flat_systs = {
-        'lumi': 1.6,
+        'lumi': 0.73,
         'trigger_cr': 2.0,
         'trigger_sim': 2.1,
     }
@@ -894,13 +1043,12 @@ def systematics_table():
             mths = json.load(f, cls=common.Decoder)
         meta = mths['central'].metadata
         year = meta['year']
+        if isinstance(year, list): year = "merged"
         if not isinstance(year,str): year = str(int(year))
-
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
         central = mths['central']
         central_yield = get_yield(central)
-        #common.logger.info(f'central metadata:\n{meta}')
 
         passed = True
         for qf in qtyfilters:
@@ -913,20 +1061,31 @@ def systematics_table():
         total = 0
         for syst in sorted(systs.keys()):
             syst_effect = 0
-            asyst = syst
+            asyst_list = []
             # uncorrelated systs stored with sysyear naming (for datacard creation)
-            if syst in unc_systs: asyst += get_sysyear(year)
-            if f'{asyst}_up' in mths:
-                syst_up_yield = get_yield(mths[f'{asyst}_up'])
-                syst_dn_yield = get_yield(mths[f'{asyst}_down'])
-                syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
-            elif syst in flat_systs:
-                syst_effect = flat_systs[syst]
+            if syst in unc_systs:
+                if year == "merged":
+                    if syst != "stat":
+                        asyst_list += [syst + y for y in ["2016", "2017", "2018"]]
+                    else:
+                        asyst_list += [syst]
+                else:
+                    asyst_list.append(syst + get_sysyear(year))
             else:
-                #common.logger.warning(f'could not find systematic: {syst}')
-                continue
-            update_effect(year,syst,syst_effect)
-            total += syst_effect**2
+                asyst_list.append(syst)
+
+            for asyst in asyst_list:
+                if f'{asyst}_up' in mths:
+                    syst_up_yield = get_yield(mths[f'{asyst}_up'])
+                    syst_dn_yield = get_yield(mths[f'{asyst}_down'])
+                    syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
+                elif syst in flat_systs:
+                    syst_effect = flat_systs[syst]
+                else:
+                    common.logger.warning(f'could not find systematic: {syst}')
+                    continue
+                update_effect(year,syst,syst_effect)
+                total += syst_effect**2
         total = np.sqrt(total)
         update_effect(year,"total",total)
 
@@ -943,13 +1102,13 @@ def systematics_table():
     sigfig = 2
     maxdec = int(abs(np.log10(minimum)))
 
-    print(" & ".join(["Systematic"]+years)+r" \\")
+    print(" & ".join(["Systematic"]+list(syst_effects.keys()))+r" \\")
     print(r"\hline")
     def print_syst_row(syst):
         cols = [systs[syst]]
-        for year in years:
-            tmin = syst_effects[year][syst][0]
-            tmax = syst_effects[year][syst][1]
+        for era in syst_effects.keys():
+            tmin = syst_effects[era][syst][0]
+            tmax = syst_effects[era][syst][1]
             smin = printSigFigs(tmin,sigfig,maxdec)
             smax = printSigFigs(tmax,sigfig,maxdec)
             # don't bother to display a range if values are equal within precision

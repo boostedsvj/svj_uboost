@@ -34,8 +34,86 @@ def wls(i, x, y, e, w, deg):
     if debug_print(i): print("y_pred",y_pred)
     return y_pred, L[i]
 
+# second-derivative (curvature) operator
+# equates to: f[i] - 2 f[i+1] + f[i+2]
+def d2op(x):
+    n = len(x)
+    if n<3: raise ValueError("d2op needs at least 3 x values")
+    if np.any(np.diff(x)<=0): raise ValueError("d2op needs strictly increasing x")
+
+    D = np.zeros((n - 2, n), dtype=float)
+
+    for i in range(n - 2):
+        h1 = x[i + 1] - x[i]
+        h2 = x[i + 2] - x[i + 1]
+
+        D[i, i] = 2.0 / (h1 * (h1 + h2))
+        D[i, i + 1] = -2.0 / (h1 * h2)
+        D[i, i + 2] = 2.0 / (h2 * (h1 + h2))
+
+    return D
+
+# fraction of MC second-derivative roughness expected to survive in smoothed template
+# q = tr(D L e L^T D^T) / tr(D e D^T)
+def leak_rough(L, e, D):
+    DL = D @ L
+    numer = np.sum((DL * e[None, :])**2)
+    denom = np.sum((D * e[None, :])**2)
+    if denom <= 0:
+        return np.nan
+    return numer/denom
+
+# fraction of MC variance expected to survive in smoothed template
+def leak_var(L, e):
+    numer = np.sum((L * e[None, :])**2)
+    denom = np.sum(e**2)
+    if denom <= 0:
+        return np.nan
+    return numer/denom
+
+def _finite_arr(*arrays):
+    mask = np.ones_like(np.asarray(arrays[0], dtype=float), dtype=bool)
+
+    for a in arrays:
+        a = np.asarray(a, dtype=float)
+        mask &= np.isfinite(a)
+
+    return mask
+
+# find "knee" for monotonically decreasing curve
+# by finding point w/ max distance from straight line connecting endpoints
+def knee(spans, q_rough, log_y=True):
+    valid = _finite_arr(spans, q_rough)
+    s_valid = spans[valid]
+    q_valid = q_rough[valid]
+    order = np.argsort(s_valid)
+    s_sorted = s_valid[order]
+    q_sorted = q_valid[order]
+    qq = np.log(q_sorted) if log_y else q_sorted.copy()
+    # normalize to 0,1
+    s_range = s_sorted[-1] - s_sorted[0]
+    q_range = qq.max() - qq.min()
+    s_norm = (s_sorted - s_sorted[0]) / s_range
+    q_norm = (qq - qq.min()) / q_range
+    # chord
+    line = 1.0 - s_norm
+    distance = line - q_norm
+    # do not allow endpoints to be selected
+    distance[0] = -np.inf
+    distance[-1] = -np.inf
+    knee_local_sorted = int(np.nanargmax(distance))
+    # move back to original index
+    valid_indices = np.flatnonzero(valid)
+    sorted_original_indices = valid_indices[order]
+    knee_index = int(sorted_original_indices[knee_local_sorted])
+    if debug: print("index",knee_index)
+    if debug: print("distance",distance[knee_local_sorted])
+    if debug: print("span",spans[knee_index])
+    if debug: print("q_rough",q_rough[knee_index])
+    return knee_index
+
 # this follows "Locally Weighted Regression: An Approach to Regression Analysis by Local Fitting", W. Cleveland, S. Devlin
-def ci(y, y_pred, L, alpha):
+def ci(x, y, e, y_pred, L, alpha):
     R = y-y_pred # residuals
     IL = np.identity(L.shape[0]) - L
     d1 = np.trace(IL.T.dot(IL)) # effective degrees of freedom
@@ -60,7 +138,12 @@ def ci(y, y_pred, L, alpha):
     # generalized cross validation (for span optimization)
     gcv = S/d1
     if debug: print("gcv",gcv)
-    return y_dn, y_up, gcv
+    # noise leakage
+    D = d2op(x)
+    if debug: print("D",D)
+    q_rough = leak_rough(L,e,D)
+    if debug: print("q_rough",q_rough)
+    return y_dn, y_up, gcv, q_rough
 
 # span = fraction of points to include in fit
 def loess(x, y, e, deg, alpha, span):
@@ -74,7 +157,7 @@ def loess(x, y, e, deg, alpha, span):
         y_pred[i], L_final[i] = wls(i,x,y,e,w,deg)
 #        if debug_print(i): print(y_pred[i], L_final[i].dot(y))
 
-    y_dn, y_up, gcv = ci(y, y_pred, L_final, alpha)
+    y_dn, y_up, gcv, q_rough = ci(x, y, e, y_pred, L_final, alpha)
     if debug:
         i = 5
         print("stderr",y_pred[i]-y_dn[i])
@@ -82,4 +165,4 @@ def loess(x, y, e, deg, alpha, span):
         import sys
         sys.exit(0)
 
-    return y_pred, (y_dn, y_up), gcv
+    return y_pred, (y_dn, y_up), gcv, q_rough
