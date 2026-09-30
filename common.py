@@ -492,8 +492,11 @@ def get_event_weight(obj,lumi=None, noPU=False):
     if isinstance(obj,svj.Columns):
         if lumi is None:
             lumi = lumis[str(obj.metadata['year'])]
-
-        puweights = np.ones_like(tree_weight) if noPU else obj.to_numpy(["puweight"]).ravel()
+        if obj.metadata['sample_type'] == 'data': # Early exit before accessing weight
+            return np.ones_like(obj.arrays['evt'], dtype=np.float32)
+        tree_weights = obj.to_numpy(['weight']).ravel()
+        puweights = obj.to_numpy(["puweight"]).ravel()
+        puweights = np.ones_like(puweights) if noPU else puweights
         if obj.metadata["sample_type"]=="sig":
             mz = obj.metadata["mz"]
             if mz in signal_xsecs:
@@ -506,17 +509,18 @@ def get_event_weight(obj,lumi=None, noPU=False):
             logger.info(f'Event weight: {lumi}*{xsec}/{nevents} = {event_weight}')
             return event_weight * puweights
         elif obj.metadata["sample_type"]=="bkg":
-            tree_weights = obj.to_numpy(['weight']).ravel()
             if len(tree_weights)>0: logger.info(f'Event weight: {lumi}*{tree_weights[0]}*{puweights[0]} = {lumi*tree_weights[0]*puweights[0]}')
             return lumi*tree_weights*puweights
-        else: # data
-            return 1.0
 
     elif isinstance(obj,Histogram):
         return obj.metadata.get('event_weight',1)
 
     else:
         raise RuntimeError(f'Unknown weight method for object of class {type(obj).__name__}')
+
+
+SF_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+SF_FILE = 'models/jetvar_model_uncertainty.json'
 
 def get_single_event_weight(weights):
     if isinstance(weights,float) or isinstance(weights,int): return weights
@@ -692,7 +696,7 @@ def mask_isolated_bins(counts):
 
 def compute_bkg_isolatedevt_mask(mT):
     """
-    Given the mT array of background events from a single background sample, return a True/False array of 
+    Given the mT array of background events from a single background sample, return a True/False array of
     whether to keep the event. If the events appears in an isloated bin in the
     standard mT binning scheme. The event is rejected
     """
@@ -1142,6 +1146,13 @@ def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_nam
         var_map, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
         var_dict[str(cut_val)] = (var_map.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
 
+    # Adding some generation informations
+    var_dict["metadata"] = {
+        "event_count": len(weight),
+        "sum_of_weight": float(np.sum(weight)),
+        "efficiency_map": { str(cut_val): float(percent) for cut_val, percent in zip(cut_vals, percents) }
+    }
+
     if ddt_name is None:
         ddt_name = 'ddt_' + str(var) + '_' + datetime.now().strftime('%Y%m%d') + '.json'
     with open(ddt_name, 'w') as f:
@@ -1416,6 +1427,35 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     cols = cols.select(bdt_ddt_score < 0.0) # mask for the selection
     cols.cutflow['loose_ddt(antibdt)'] = len(cols)
     return cols
+
+"""Calculating scale factor for jet variable modeling"""
+
+SF_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+SF_FILE = 'models/jetvar_model_uncertainty.json'
+
+def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
+    check_if_model_exists(sf_file, xrootd_url)
+    sf_container = json.load(open(sf_file, "r"))
+    var_bin = np.array(sf_container["ddt_bins"])
+    sf = np.array(sf_container["0.1"]["sf"]["val"])
+    stat_unc =  np.array(sf_container["0.1"]["sf"]["stat_unc"])
+    syst_unc =  np.array(sf_container["0.1"]["sf"]["syst_unc"])
+    unc = np.sqrt(stat_unc **2 + syst_unc**2)
+
+    mT = cols.to_numpy(['mt']).ravel()
+    pT = cols.to_numpy(['pt']).ravel()
+    ecf = cols.to_numpy(['ecfm2b1']).ravel()
+    m = np.ones_like(mT, dtype=bool)
+    ddt_val = calculate_varDDT(mT, pT, m, ecf, 0.1, DDT_FILE_CUTBASED_RT_DDT, smear=RT_DDT_SMEAR)
+
+    bin_idx = np.digitize(ddt_val, bins=var_bin)
+    if var == "cen":
+        return sf[bin_idx]
+    elif var == "up":
+        return sf[bin_idx] * (1+unc[bin_idx])
+    else:
+        return sf[bin_idx] * (1-unc[bin_idx])
+
 
 class InvalidSelectionException(Exception):
     def __init__(self, msg='Unknown selection {}; choices are "preselection", "cutbased", or "bdt=X.XXX".', sel="", *args, **kwargs):

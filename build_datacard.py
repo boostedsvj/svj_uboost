@@ -161,7 +161,7 @@ def build_histogram(args=None):
         elif selection.startswith('antiloosebdt='):
             cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,ddt_map_file=common.DDT_FILE_BDTBASED)
         elif selection.startswith('antiloosertbdt='):
-            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED)
+            cols = common.apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=common.RT_DDT_FILE,ddt_map_file=common.DDT_FILE_BDTBASED_RT_DDT)
         elif selection=='preselection':
             pass
         elif selection=="preselection_minus":
@@ -195,6 +195,8 @@ def build_histogram(args=None):
     w = None
     if metadata["sample_type"] != "data":
         w = common.get_event_weight(cen_columns,lumi)
+        if metadata['sample_type'] == 'sig':
+            w *= common.get_model_sf(cen_columns, var="cen")
         metadata['event_weight'] = common.get_single_event_weight(w)
 
     # Defining the histogram type to use
@@ -223,7 +225,7 @@ def build_histogram(args=None):
         def mth_jerjecjes(tag):
             col = svj.Columns.load(get_variation(tag))
             col = apply_selection(col,year)
-            event_weight = common.get_event_weight(col,lumi)
+            event_weight = common.get_event_weight(col,lumi) * common.get_model_sf(col, var="cen")
             return VarHistogram(col, event_weight)
         # JER, JEC treated as uncorrelated between years (but 2018PRE, 2018POST always correlated)
         sysyear = get_sysyear(year)
@@ -260,6 +262,14 @@ def build_histogram(args=None):
         pdfw_down = np.clip(pdfw_down, a_min=0, a_max=None)
         hist_variants['pdf_up'] = VarHistogram(cen_columns, w*pdfw_up)
         hist_variants['pdf_down'] = VarHistogram(cen_columns, w*pdfw_down)
+
+        # Jet var modelling
+        jet_sf = common.get_model_sf(cen_columns, var="cen")
+        jet_sf_up = common.get_model_sf(cen_columns, var="up")
+        jet_sf_down = common.get_model_sf(cen_columns, var="down")
+        hist_variants["jetvar_up"] = VarHistogram(cen_columns, w * jet_sf_up / jet_sf)
+        hist_variants["jetvar_down"] = VarHistogram(cen_columns, w * jet_sf_down / jet_sf)
+        hist_variants["jetvar_none"] = VarHistogram(cen_columns, w / jet_sf)
 
         # MC stats
         mc_stat_err = np.sqrt(np.histogram(VarHistogram._create_var_array(cen_columns), bins=hist_central.binning, weights=w**2)[0])
@@ -493,6 +503,7 @@ def get_systs(names=False,years=["2016","2017","2018"],smooth=False):
         'fsr': "FSR (parton shower)",
         'pu': "Pileup reweighting",
         'pdf': "PDF",
+        'jetvar': "Model"
     }
     if smooth:
         syst_names.update({
@@ -533,7 +544,7 @@ def make_stat_combined(mths,sysyear):
 
 @scripter
 def plot_systematics():
-    yrange = common.pull_arg('--hist_var', type=str, default='mt').hist_var
+    hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     yrange = common.pull_arg('--yrange', type=float, nargs=2, default=None).yrange
     json_file = common.pull_arg('jsonfile', type=str).jsonfile
     change_bin_width(hist_var)
@@ -561,6 +572,8 @@ def plot_systematics():
         plot.plot_hist(mths['central'], label='Central')
         plot.plot_hist(mths[f'{syst}_up'], mths['central'], f'{syst} up')
         plot.plot_hist(mths[f'{syst}_down'], mths['central'], f'{syst} down')
+        if syst == "jetvar":
+            plot.plot_hist(mths[f'{syst}_none'], mths['central'], f'{syst} none')
         if yrange is not None:
             plot.bot.set_ylim(yrange[0],yrange[1])
         plot.save(f'{outdir}/{syst}.png')
@@ -578,14 +591,16 @@ def plot_bkg():
     do_signal = len(sig_json_file) > 0
 
     h = mths['bkg'].rebin(rebin).cut(mtmin,mtmax)
+    h_sum = np.sum(h.vals)
     binning = h.binning
     nbins = h.nbins
     zero = np.zeros(nbins)
 
-    with common.quick_ax() as ax:
+    with common.quick_ax(outfile=f"bkg_sel-{h.metadata['selection']}.pdf") as ax:
         # for bkg in ['zjets', 'wjets', 'ttjets', 'qcd']:
-        for bkg in ['qcd', 'ttjets', 'wjets', 'zjets']:
-            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=bkg)
+        for label, bkg in [("QCD", 'qcd'), ("TT+Jets", 'ttjets'), ("W+Jets", 'wjets'), ("Z+Jets", 'zjets')]:
+            fraction = np.sum(mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals) / h_sum * 100.
+            ax.fill_between(h.binning[:-1], zero, h.vals, step='post', label=label+ f" ({fraction:.2f}\\%)")
             h.vals -= mths[bkg].rebin(rebin).cut(mtmin,mtmax).vals
 
         if do_signal:
@@ -604,7 +619,7 @@ def plot_bkg():
         common.put_on_cmslabel(ax)
         ax.text(
             0.02, 0.02,
-            'Cut-based' if h.metadata['selection']=='cutbased' else 'BDT',
+            h.metadata['selection'],
             horizontalalignment='left',
             verticalalignment='bottom',
             transform=ax.transAxes,
@@ -695,7 +710,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         if not isinstance(year,str) and not isinstance(year,list): year = str(int(year))
         variations = get_systs(years=year)
         variations = [v for v in variations if not v.startswith('stat')]
-        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]
+        variations = [var+'_up' for var in variations]+[var+'_down' for var in variations]+["jetvar_none"]
         variations = [default]+variations
     else:
         variations = [default]
@@ -846,7 +861,7 @@ def plot_smooth():
     vars = [var]
     if var=='all':
         vars = get_systs()
-        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars]
+        vars = [var+'_up' for var in vars]+[var+'_down' for var in vars] + ["jetvar_none"]
         vars = [default]+vars
 
     mths = []
@@ -992,12 +1007,12 @@ def printSigFigs(num,fig,maxdec):
 
 @scripter
 def systematics_table():
-    change_bin_width()
     hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     qtyrange = common.pull_arg('--qtyrange', metavar=("qty min max"), default=[], type=str, action='append', nargs=3).qtyrange
     minimum = common.pull_arg('--minimum', type=float, default=0.01, help="minimum value to display, smaller values rounded to 0").minimum
     skimdir = common.pull_arg('skimdir', type=str).skimdir
     skims = expand_wildcards(skimdir)
+    change_bin_width(hist_var)
 
     # set up qty range limitations
     qtyfilters = []
@@ -1006,7 +1021,7 @@ def systematics_table():
 
     # needs to be kept in sync w/ boostedsvj/svj_limits/boosted_fits.py:gen_datacard()
     flat_systs = {
-        'lumi': 1.6,
+        'lumi': 0.73,
         'trigger_cr': 2.0,
         'trigger_sim': 2.1,
     }
@@ -1028,13 +1043,12 @@ def systematics_table():
             mths = json.load(f, cls=common.Decoder)
         meta = mths['central'].metadata
         year = meta['year']
+        if isinstance(year, list): year = "merged"
         if not isinstance(year,str): year = str(int(year))
-
         mths = make_stat_combined(mths,get_sysyear(year))
         mths = rebin_dict(mths, hist_var )
         central = mths['central']
         central_yield = get_yield(central)
-        #common.logger.info(f'central metadata:\n{meta}')
 
         passed = True
         for qf in qtyfilters:
@@ -1047,20 +1061,31 @@ def systematics_table():
         total = 0
         for syst in sorted(systs.keys()):
             syst_effect = 0
-            asyst = syst
+            asyst_list = []
             # uncorrelated systs stored with sysyear naming (for datacard creation)
-            if syst in unc_systs: asyst += get_sysyear(year)
-            if f'{asyst}_up' in mths:
-                syst_up_yield = get_yield(mths[f'{asyst}_up'])
-                syst_dn_yield = get_yield(mths[f'{asyst}_down'])
-                syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
-            elif syst in flat_systs:
-                syst_effect = flat_systs[syst]
+            if syst in unc_systs:
+                if year == "merged":
+                    if syst != "stat":
+                        asyst_list += [syst + y for y in ["2016", "2017", "2018"]]
+                    else:
+                        asyst_list += [syst]
+                else:
+                    asyst_list.append(syst + get_sysyear(year))
             else:
-                #common.logger.warning(f'could not find systematic: {syst}')
-                continue
-            update_effect(year,syst,syst_effect)
-            total += syst_effect**2
+                asyst_list.append(syst)
+
+            for asyst in asyst_list:
+                if f'{asyst}_up' in mths:
+                    syst_up_yield = get_yield(mths[f'{asyst}_up'])
+                    syst_dn_yield = get_yield(mths[f'{asyst}_down'])
+                    syst_effect = max(pct_diff(central_yield,syst_up_yield),pct_diff(central_yield,syst_dn_yield))
+                elif syst in flat_systs:
+                    syst_effect = flat_systs[syst]
+                else:
+                    common.logger.warning(f'could not find systematic: {syst}')
+                    continue
+                update_effect(year,syst,syst_effect)
+                total += syst_effect**2
         total = np.sqrt(total)
         update_effect(year,"total",total)
 
@@ -1077,13 +1102,13 @@ def systematics_table():
     sigfig = 2
     maxdec = int(abs(np.log10(minimum)))
 
-    print(" & ".join(["Systematic"]+years)+r" \\")
+    print(" & ".join(["Systematic"]+list(syst_effects.keys()))+r" \\")
     print(r"\hline")
     def print_syst_row(syst):
         cols = [systs[syst]]
-        for year in years:
-            tmin = syst_effects[year][syst][0]
-            tmax = syst_effects[year][syst][1]
+        for era in syst_effects.keys():
+            tmin = syst_effects[era][syst][0]
+            tmax = syst_effects[era][syst][1]
             smin = printSigFigs(tmin,sigfig,maxdec)
             smax = printSigFigs(tmax,sigfig,maxdec)
             # don't bother to display a range if values are equal within precision
