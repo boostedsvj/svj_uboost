@@ -65,9 +65,10 @@ def parse_arguments():
     #                Signal mt spectrums for one BDT working point,  one signal mt spectrum for many BDT working points
     allowed_plots = ['2D_DDT_map', 'bkg_scores_mt', 'sig_scores_mt', 'fom_significance', 'fom_mt_scan', 'sig_mt_single_BDT', 'one_sig_mt_many_bdt']
     parser.add_argument('--plot', nargs='*', type=str, default=[], choices=allowed_plots, help='Plots to make')
-
+    parser.add_argument('--psuff', type=str, default="", help="Suffix to add to file name")
     # Add verbosity level argument
     parser.add_argument('--verbosity', type=int, choices=[0, 1, 2], default=1, help="Set verbosity level: 0 (silent), 1 (default), 2 (detailed)")
+
 
     return parser.parse_args()
 
@@ -127,7 +128,98 @@ def make_RT_selection(mT, pT, rT, rt_sel: float | None, rt_ddt_file: str | None)
     if rt_ddt_file is None: # Performing non-DDT selection
         return (rT > rt_sel)
     mask = np.ones_like(mT, dtype=bool)
-    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file, smear=0.2) > 0.0
+    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file, smear=0.0) > 0.0
+
+def get_xye(hist):
+    x = hist.binning
+    x = (x[:-1]+x[1:])/2 # bin centers
+    y = hist.vals
+    errs = hist.errs
+    return x,y,errs
+
+def do_loess(hist,span,do_gcv=False):
+    from uloess import loess
+    x, y, errs = get_xye(hist)
+    from uloess import loess
+    # safety check for empty bins w/ empty errs
+    for i,yy in enumerate(y):
+        if yy==0:
+            errs[i] = 1
+    # 1sigma interval
+    try:
+        pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
+    except np.linalg.LinAlgError as err:
+        gcv = 1e10
+        print(err)
+    if do_gcv:
+        return gcv, q_rough
+    else:
+        return pred, conf_int
+
+def consec_true_mask(mask, min_run):
+    mask = np.asarray(mask, dtype=bool)
+    if min_run <= 1:
+        return mask
+    out = np.zeros_like(mask)
+    n = len(mask)
+    i = 0
+    while i < n:
+        if not mask[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and mask[j]:
+            j += 1
+        if j - i >= min_run:
+            out[i:j] = True
+        i = j
+    return out
+
+def created_smoothed_mtdist(mT, weights):
+    # Configuration constants, taking from build_datacard
+    LEAK_TOL = 1.0
+    MIN_RUN = 2
+    GCV_TOL = 0.0
+    OPTIMIZE = 1000
+    SPAN_MIN = 0.05
+    SPAN_MAX=0.5
+    bins = np.linspace(130, 700, 58) # New binning
+
+    MTHistogram.bins = bins
+    hist = MTHistogram(mT, weights)
+
+    spans = np.linspace(SPAN_MIN, SPAN_MAX, OPTIMIZE, endpoint=False) # skip 1
+    scans = [do_loess(hist, span, do_gcv=True) for span in spans]
+    # list of pairs -> pair of lists
+    gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
+    from uloess import knee
+    knee_index = knee(spans, q_rough, LEAK_TOL)
+    span_knee = spans[knee_index]
+    q_knee = q_rough[knee_index]
+    # this is equivalent to applying the tolerance to log(q_rough)
+    q_thresh = q_knee**LEAK_TOL
+    # only allow tolerance to include smaller spans in feasible range, not larger ones
+    feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
+    feasible = consec_true_mask(feasible_raw, MIN_RUN)
+    # fallback: ignore consecutive run requirement
+    if not np.any(feasible):
+        feasible = feasible_raw
+    best_feasible_gcv = np.min(gcvs[feasible])
+    feasible_indices = np.where(feasible)[0]
+    best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+    best_feasible_gcv_span = spans[best_feasible_idx]
+    plateau_gcv = best_feasible_gcv*(1.0+GCV_TOL)
+    if GCV_TOL>0:
+        plateau_mask = feasible & (gcvs < plateau_gcv)
+        chosen_idx = np.flatnonzero(plateau_mask)[0]
+    else:
+        chosen_idx = best_feasible_idx
+    span_val = spans[chosen_idx]
+    pred, conf = do_loess(hist,span=span_val)
+    hsmooth = hist.copy()
+    hsmooth.vals = np.where((hist.vals == 0) & (pred < 0), 0.0, pred)
+    hsmooth.errs = conf[1] - pred
+    return hsmooth
 
 
 #------------------------------------------------------------------------------
@@ -148,6 +240,7 @@ def main():
     sig_bdt_cut = args.sig_bdt_cut
     var_cuts = args.var_cuts
     plots = args.plot
+    psuff = args.psuff
     verbosity = args.verbosity
 
     set_mpl_fontsize(18, 22, 26)
@@ -221,7 +314,7 @@ def main():
             ax.figure.colorbar(im, label='DDT Map value')
             ax.set_xlabel('$\\rho_{\\mathrm{T}}$')
             ax.set_ylabel('$p_{\\mathrm{T}}$ [GeV]')
-            save_plot(plt, plt_name)
+            save_plot(plt, f"{plt_name}{psuff}")
             plt.close()
 
         for cut_val, arrays in var_dict.items():
@@ -262,10 +355,10 @@ def main():
             # Common method for fixing files for MT, related items
             ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
             ax.legend()
-            save_plot(plt, name)
+            save_plot(plt, f"{name}{psuff}")
             if save_log:
                 ax.set_yscale('log') # Saving a log version of the plot
-                save_plot(plt,f'log_{name}')
+                save_plot(plt,f'log_{name}{psuff}')
             plt.close()
 
 
@@ -329,6 +422,24 @@ def main():
         ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
         save_mt_fig(ax, f'bkg_ddt_ratio_vs_mT_{ana_label}')
 
+
+        fig, ax = simple_fig()
+        all_ratios_smooth = []
+        for cuts, scores in primary_var_ddt.items():
+            mask_above = (scores > 0) & rt_mask
+            mask_below = (scores < 0) & rt_mask
+            print(f"Smoothing {ana_label} above {cuts}")
+            h_above = created_smoothed_mtdist(mT[mask_above], bkg_weight[mask_above])
+            print(f"Smoothing {ana_label} below {cuts}")
+            h_below = created_smoothed_mtdist(mT[mask_below], bkg_weight[mask_below])
+            ratio = np.divide(h_above.vals, h_below.vals)
+            all_ratios_smooth.append(ratio)
+            center = (h_above.binning[1:] + h_above.binning[:-1])/2
+            ax.step(center, ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
+        ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
+        save_mt_fig(ax, f'bkg_ddt_ratio_vs_mT_smoothed_{ana_label}')
+
+
         # Plot normalized ratio: divide each ratio curve by its average to see shape only
         fig, ax = simple_fig()
         for cuts, ratio in zip(primary_var_ddt.keys(), all_ratios):
@@ -343,12 +454,13 @@ def main():
 
         # Plot ratio of events above and below DDT > 0 compared with the control region that relaxes the RT selection
         if ana_type != 'RT':
+
             fig, ax = simple_fig()
             all_ratios = []
             all_uncs = []
             for cuts, scores in primary_var_ddt.items():
                 mask_above = (scores > 0) & rt_mask
-                mask_below = (scores < 0)
+                mask_below = (scores < 0) & (~rt_mask)
                 num_above, _ = np.histogram(mT[mask_above], bins=mT_bins, weights=bkg_weight[mask_above])
                 num_below, _ = np.histogram(mT[mask_below], bins=mT_bins, weights=bkg_weight[mask_below])
                 ratio = np.divide(num_above, num_below, out=np.zeros_like(num_above, dtype=float), where=num_below > 0)
@@ -359,6 +471,24 @@ def main():
                 ax.step(bin_centers, ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
             ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
             save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_{ana_label}')
+
+            fig, ax = simple_fig()
+            all_ratios_smooth = []
+            all_uncs_smooth = []
+            for cuts, scores in primary_var_ddt.items():
+                mask_above = (scores > 0) & rt_mask
+                mask_below = (scores < 0) & (~rt_mask)
+                print(f"Smoothing {ana_label} above {cuts}")
+                h_above = created_smoothed_mtdist(mT[mask_above], bkg_weight[mask_above])
+                print(f"Smoothing {ana_label} below {cuts}")
+                h_below = created_smoothed_mtdist(mT[mask_below], bkg_weight[mask_below])
+                ratio = np.divide(h_above.vals, h_below.vals)
+                all_ratios_smooth.append(ratio)
+                all_uncs_smooth.append(np.sqrt(1/h_above.vals + 1/h_below.vals))
+                center_smooth = (h_above.binning[1:] + h_above.binning[:-1])/2
+                ax.step(center, ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
+            ax.set_ylabel(r'Ratio: $\mathrm{DDT} > 0 \,/\, \mathrm{DDT} < 0$')
+            save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_smooth_{ana_label}')
 
             fig, ax = simple_fig()
             for cuts, ratio, unc in zip(primary_var_ddt.keys(), all_ratios, all_uncs):
@@ -372,6 +502,21 @@ def main():
             ax.set_ylim(0.0, 2.0)
             ax.set_ylabel(r'$(\mathrm{DDT}>0/\mathrm{DDT}<0) \,/\, \langle\mathrm{DDT}>0/\mathrm{DDT}<0\rangle$')
             save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_normalized_{ana_label}')
+
+            fig, ax = simple_fig()
+            for cuts, ratio, unc in zip(primary_var_ddt.keys(), all_ratios_smooth, all_uncs_smooth):
+                # Compute average, ignoring empty bins
+                avg = np.nanmean(ratio[ratio > 0])  # or use np.mean with a mask
+                normalized_ratio = np.divide(ratio, avg, out=np.zeros_like(ratio), where=avg > 0)
+                print(unc, normalized_ratio, bin_centers)
+                ax.fill_between(center_smooth, normalized_ratio * (1+unc), normalized_ratio* (1 - unc), step='mid', alpha=0.1)
+                ax.step(center_smooth, normalized_ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
+            ax.axhline(1.0, color='gray', linestyle='--', linewidth=1)
+            ax.axvline(180, color='gray', linestyle='--', linewidth=1)
+            ax.axvline(650, color='gray', linestyle='--', linewidth=1)
+            ax.set_ylim(0.75, 1.25)
+            ax.set_ylabel(r'$(\mathrm{DDT}>0/\mathrm{DDT}<0) \,/\, \langle\mathrm{DDT}>0/\mathrm{DDT}<0\rangle$')
+            save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_smooth_normalized_{ana_label}')
 
         if verbosity > 1 : print(primary_var_ddt)
 
@@ -513,7 +658,7 @@ def main():
             ax.set_ylabel(ylabel)
             ax.set_yscale(yscale)
             ax.set_xlabel(ana_variant_dict[ana_type]["primary_var_label"])
-            save_plot(plt, f'metrics_{ana_label}_{plotName}', flag_tight_layout=False, bbox_inches='tight')
+            save_plot(plt, f'metrics_{ana_label}_{plotName}{psuff}', flag_tight_layout=False, bbox_inches='tight')
             plt.close()
 
         # sort the best bdt cuts
@@ -541,7 +686,7 @@ def main():
             ax.set_ylabel(ylabel)
             ax.set_xlabel("$m(\\mathrm{Z'})$ [GeV]")
             # cannot use layout_tight, will cause saving errors
-            save_plot(plt, f'best_{ana_label}_{plotName}', flag_tight_layout=False, bbox_inches='tight')
+            save_plot(plt, f'best_{ana_label}_{plotName}{psuff}', flag_tight_layout=False, bbox_inches='tight')
             plt.close()
 
     # _____________________________________________
@@ -603,7 +748,7 @@ def main():
         ax_upper.legend()
         ax_lower.legend()
         # cannot use layout_tight, will cause saving errors
-        save_plot(plt, f'FOM_mT_scan_{ana_label}')
+        save_plot(plt, f'FOM_mT_scan_{ana_label}{psuff}')
         plt.close()
 
     # _____________________________________________
@@ -646,11 +791,11 @@ def main():
             ax.set_xlabel('$m_{\\mathrm{T}}$ [GeV]')
             ax.set_ylabel('Events')
             ax.legend()
-            save_plot(plt,'sig_events_vs_mT')
+            save_plot(plt,f'sig_events_vs_mT{psuff}')
 
             # log scale it
             ax.set_yscale('log')
-            save_plot(plt,'log_sig_events_vs_mT')
+            save_plot(plt,f'log_sig_events_vs_mT{psuff}')
             plt.close()
 
         # _____________________________________________
