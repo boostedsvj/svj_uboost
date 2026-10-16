@@ -519,9 +519,6 @@ def get_event_weight(obj,lumi=None, noPU=False):
         raise RuntimeError(f'Unknown weight method for object of class {type(obj).__name__}')
 
 
-SF_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
-SF_FILE = 'models/jetvar_model_uncertainty.json'
-
 def get_single_event_weight(weights):
     if isinstance(weights,float) or isinstance(weights,int): return weights
     elif len(weights)>0: return weights[0]
@@ -1036,7 +1033,7 @@ def ddt_windowcuts(mt, pt):
     '''
     Basically a tool to constantly check the kinematics during the DDT processes
     '''
-    cuts = (mt>100) & (mt<1000) & (pt>110) & (pt<1500)
+    cuts = (mt>100) & (mt<1000) & (pt>100)
     return cuts
 
 def weighted_percentile(x, w, percent):
@@ -1078,39 +1075,49 @@ def varmap(mt, pt, rt_sel, var, weight, percent, cut_val):
     # Apply the rho-ddt window cuts to the data (still useful for pt/mt range)
     cuts = ddt_windowcuts(mt, pt)
     mt_pt = mt/pt
+    lpt = np.log10(pt/100)
     NBINS = 73
 
     # Create a 2D histogram of mt and pt, weighted by event weights
     C, (MT_PT_edges, PT_edges, RT_edges) = np.histogramdd(
-        np.array([mt_pt[cuts], pt[cuts], rt_sel[cuts]]).transpose(),
+        np.array([mt_pt[cuts], lpt[cuts], rt_sel[cuts]]).transpose(),
         bins=(NBINS, NBINS, [0,1,2]),
         weights=weight[cuts]
     )
 
     # Initialize the variable map
-    VAR_map = np.zeros_like(C)
+    VAR_map, SumW, SumW2 = np.zeros_like(C), np.zeros_like(C), np.zeros_like(C)
 
     # Get data arrays for events passing the cuts
     VAR = var[cuts]
     WEIGHT = weight[cuts]
     mt_pt_bin_idx = np.digitize(mt_pt[cuts], MT_PT_edges) - 1
-    pt_bin_idx = np.digitize(pt[cuts], PT_edges) - 1
+    pt_bin_idx = np.digitize(lpt[cuts], PT_edges) - 1
     rt_bin_idx = np.digitize(rt_sel[cuts], RT_edges) -1
 
     def _calc_bin(bin_idx):
         i,j,k = bin_idx
         BIN_CUT = (mt_pt_bin_idx == i) & (pt_bin_idx == j) & (rt_bin_idx == k)
         if np.sum(BIN_CUT) > 0:
-            return weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent)
-        return 0
+            return weighted_percentile(VAR[BIN_CUT], WEIGHT[BIN_CUT], 100 - percent), np.sum(WEIGHT[BIN_CUT]), np.sum(WEIGHT[BIN_CUT]**2)
+        return 0, 0, 0
 
     with mp_thread_pool() as p:
         bin_list = [(i,j,k) for i in range(len(MT_PT_edges)-1) for j in range(len(PT_edges)-1) for k in [0,1]]
         result_list = list(tqdm.tqdm(p.imap(_calc_bin, bin_list), desc="DDT bin", total=len(bin_list)))
         for (i,j,k), result in zip(bin_list, result_list):
-            VAR_map[i][j][k] = result
+            VAR_map[i][j][k] = result[0]
+            SumW[i][j][k] = result[1]
+            SumW2[i][j][k] = result[2]
 
-    return VAR_map, MT_PT_edges, PT_edges, RT_edges
+    return {
+        "MT_PT_edges": MT_PT_edges,
+        "PT_edges": PT_edges,
+        "RT_edges": RT_edges,
+        "VAR_map": VAR_map,
+        "SumW": SumW,
+        "SumW2": SumW2
+    }
 
 
 # Class that converts numpy arrays into list so they can be easily stored in json files
@@ -1143,8 +1150,8 @@ def create_DDT_map_dict(mt, pt, rt_sel, var, weight, percents, cut_vals, ddt_nam
 
     for cut_val, percent in zip(cut_vals, percents):
         print(f"Creating DDT 2D map for cut value {cut_val}, efficiency {percent}%")
-        var_map, MT_PT_edges, PT_edges, RT_edges = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
-        var_dict[str(cut_val)] = (var_map.tolist(), MT_PT_edges.tolist(), PT_edges.tolist(), RT_edges)
+        var_map = varmap(mt, pt, rt_sel, var, weight, percent, cut_val)
+        var_dict[str(cut_val)] = {k:v.tolist() for k,v in var_map.items()}
 
     # Adding some generation informations
     var_dict["metadata"] = {
@@ -1182,20 +1189,18 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     if str(cut_val) not in var_dict:
         raise KeyError(f"The key {cut_val} does not exist in the dictionary.")
 
-    # Get the smoothed map and bin edges
-    var_map, MT_PT_edges, PT_edges, RT_edges = var_dict[str(cut_val)]
-    var_map = np.array(var_map)
-    MT_PT_edges = np.array(MT_PT_edges)
-    PT_edges = np.array(PT_edges)
-    RT_edges = np.array(RT_edges)
+    # Get the bin edges
+    MT_PT_edges = np.array(var_dict[str(cut_val)]["MT_PT_edges"])
+    PT_edges = np.array(var_dict[str(cut_val)]["PT_edges"])
+    RT_edges = np.array(var_dict[str(cut_val)]["RT_edges"])
 
     # Applying a smearing on the DDT map. Explicitly disabling the smearing on the RT axis
-    var_map_smooth = gaussian_filter(var_map, (smear, smear, 0.0))
+    var_map_smooth = _calculate_smoothed_varDDT(var_dict[str(cut_val)], smear)
 
     # Bin index lookup with digitize. Using minus 2 in clip becase we are no
     # longer applying the ddt_window cut, so there will be overflow entries.
     # Just folding it to the last bin for now
-    pt_bin = np.clip(np.digitize(pt, PT_edges) - 1, 0, len(PT_edges) - 2)
+    pt_bin = np.clip(np.digitize(np.log10(pt/100), PT_edges) - 1, 0, len(PT_edges) - 2)
     mt_pt_bin = np.clip(np.digitize(mt/pt, MT_PT_edges) - 1, 0, len(MT_PT_edges) - 2)
     rt_bin = np.digitize(rt_sel, RT_edges)-1
 
@@ -1203,6 +1208,37 @@ def calculate_varDDT(mt, pt, rt_sel, var, cut_val, ddt_name, smear=1.0):
     varDDT = var - var_map_smooth[mt_pt_bin, pt_bin, rt_bin]
 
     return varDDT
+
+
+def _calculate_smoothed_varDDT(var_map, smear):
+    var_map_array = np.array(var_map["VAR_map"])
+    sumw = np.array(var_map["SumW"])
+    sumw2 = np.array(var_map["SumW2"])
+    N_MT_PT_bins = len(var_map["MT_PT_edges"]) - 1
+    N_PT_bins = len(var_map["PT_edges"]) - 1
+    nevents = np.where(sumw != 0, sumw**2 / sumw2, 0.0) # Effect number of events in each bin
+    stat_weight = np.sqrt(nevents)
+
+    # Getting the grid indices in a same dimension grid (Inverse order compared with histogram binning)
+    pt_bin_val, mt_pt_bin_val = np.meshgrid(np.arange(N_PT_bins), np.arange(N_MT_PT_bins))
+
+    var_map_smoothed = np.zeros_like(var_map_array)
+
+    for rt_idx in range(len(var_map_array[0][0])): # We will not be smoothing across the RT selection boundary
+        for i in range(N_MT_PT_bins):
+            for j in range(N_PT_bins):
+                dist_sq = (i - mt_pt_bin_val) ** 2 + (j-pt_bin_val)**2
+                gaussian_weight = np.exp(- dist_sq / (2*smear))
+                weight = (gaussian_weight * stat_weight[:,:,rt_idx])
+                weight = np.where(weight > 0 , weight / np.sum(weight), 0.0)  # Normalizing the weight
+                if nevents[i][j][rt_idx] > 0:
+                    var_map_smoothed[i][j][rt_idx] = np.sum(weight * var_map_array[:,:,rt_idx])
+                    # w_flat, var_flat  = np.ravel(weight), np.ravel(var_map_array[:,:,rt_idx])
+                    # arg = np.argsort(w_flat)
+
+
+    return var_map_smoothed
+
 
 def apply_hemveto(cols):
     cols = cols.select(svj.veto_HEM(cols.arrays['ak4_subl_eta'],cols.arrays['ak4_subl_phi'],cols.arrays['ak4_subl_pt']))
