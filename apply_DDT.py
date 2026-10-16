@@ -10,7 +10,7 @@
 import os, os.path as osp, glob, pickle, logging, warnings, json, math, re
 from time import strftime
 from collections import OrderedDict
-from common import create_DDT_map_dict, calculate_varDDT
+from common import create_DDT_map_dict, calculate_varDDT, _calculate_smoothed_varDDT
 import json
 import argparse
 
@@ -128,7 +128,7 @@ def make_RT_selection(mT, pT, rT, rt_sel: float | None, rt_ddt_file: str | None)
     if rt_ddt_file is None: # Performing non-DDT selection
         return (rT > rt_sel)
     mask = np.ones_like(mT, dtype=bool)
-    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file, smear=0.0) > 0.0
+    return calculate_varDDT(mT, pT, mask, rT, rt_sel, rt_ddt_file, smear=1.0) > 0.0
 
 def get_xye(hist):
     x = hist.binning
@@ -252,21 +252,21 @@ def main():
             "inputs_to_primary": lambda x: x[:, 0],
             "primary_var_label": "$R_T$",
             "default_cut_vals": [np.round(x,4) for x in np.linspace(1.14, 1.22, 17)],
-            "smear": 0.2,
+            "smear": 1.0,
         },
         "cut-based": {
             "features": ["ecfm2b1"] + features_common,
             "inputs_to_primary": lambda x: x[:, 0],
             "primary_var_label": "$M_2^{(1)}$",
             "default_cut_vals": [np.round(x,4) for x in np.linspace(0.07 , 0.17, 21)],
-            "smear": 0.2,
+            "smear": 1.0,
         },
         "BDT-based": {
             "features": read_training_features(model_file) + features_common,
             "inputs_to_primary": lambda x:  calc_bdt_scores(x, model_file=model_file),
             "primary_var_label": "BDT",
             "default_cut_vals": [0.1, 0.2, 0.3, 0.32, 0.35, 0.37, 0.4, 0.42, 0.45, 0.47, 0.5, 0.52, 0.55, 0.57, 0.6, 0.62, 0.65, 0.67, 0.7, 0.72, 0.75, 0.77, 0.8, 0.9],
-            "smear": 0.2,
+            "smear": 1.0,
         }
     }
     # Additional parsing based on analysis method
@@ -313,19 +313,20 @@ def main():
             im = ax.imshow(img_array, **im_show_kwargs)
             ax.figure.colorbar(im, label='DDT Map value')
             ax.set_xlabel('$\\rho_{\\mathrm{T}}$')
-            ax.set_ylabel('$p_{\\mathrm{T}}$ [GeV]')
+            ax.set_ylabel('$\log$($p_{\\mathrm{T}} / 100$GeV)$')
             save_plot(plt, f"{plt_name}{psuff}")
             plt.close()
 
-        for cut_val, arrays in var_dict.items():
+        for cut_val, var_map in var_dict.items():
             if cut_val == "metadata": continue
-            var_map, MT_PT_edges, PT_edges, RT_edges = arrays
-            var_map =  np.array(var_map)
-            plot_single(var_map[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
-            plot_single(gaussian_filter(var_map[:,:,1], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
+            var_map_array = np.array(var_map["VAR_map"])
+            MT_PT_edges = np.array(var_map["MT_PT_edges"])
+            PT_edges = np.array(var_map["PT_edges"])
+            plot_single(var_map_array[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_nosmear')
+            plot_single(_calculate_smoothed_varDDT(var_map, smear)[:,:,1].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}')
             if ana_type != 'RT':
-                plot_single(var_map[:,:,0].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT_nosmear')
-                plot_single(gaussian_filter(var_map[:,:,0], smear).T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT')
+                plot_single(var_map_array[:,:,0].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT_nosmear')
+                plot_single(_calculate_smoothed_varDDT(var_map, smear)[:,:,0].T, MT_PT_edges, PT_edges, f'2D_map_{ana_label}_{cut_val}_antiRT')
             plt.close()
 
     if 'bkg_scores_mt' in plots :
@@ -499,7 +500,7 @@ def main():
                 ax.fill_between(bin_centers, normalized_ratio * (1+unc), normalized_ratio* (1 - unc), step='mid', alpha=0.1)
                 ax.step(bin_centers, normalized_ratio, where='mid', label=f'DDT({var_label} $>$ {cuts})')
             ax.axhline(1.0, color='gray', linestyle='--', linewidth=1)
-            ax.set_ylim(0.0, 2.0)
+            ax.set_ylim(0.75, 1.25)
             ax.set_ylabel(r'$(\mathrm{DDT}>0/\mathrm{DDT}<0) \,/\, \langle\mathrm{DDT}>0/\mathrm{DDT}<0\rangle$')
             save_mt_fig(ax, f'bkg_ddt_ratio_loose_vs_mT_normalized_{ana_label}')
 
