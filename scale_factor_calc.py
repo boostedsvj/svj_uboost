@@ -52,7 +52,7 @@ def build_hist(indir: str, mc_process: list[str], ddt_path: str, ecf_cuts: list[
         vr_mask = rt < 1.10
         cr_mask = rt > 1.10
         for cut in ecf_cuts:
-            ecf_ddt = common.calculate_varDDT(mt, pt, m, ecf, cut, ddt_path, smear=0.2)
+            ecf_ddt = common.calculate_varDDT(mt, m, ecf, cut, ddt_path, smear=0.2)
             sw, _ = np.histogram(ecf_ddt[vr_mask], bins=ddt_bins_op, weights=w[vr_mask])
             sw2, _ = np.histogram(ecf_ddt[vr_mask], bins=ddt_bins_op, weights=w[vr_mask]**2)
             plot, _ = np.histogram(ecf_ddt[vr_mask], bins=results['plot_bins'], weights=w[vr_mask])
@@ -86,7 +86,6 @@ def build_hist(indir: str, mc_process: list[str], ddt_path: str, ecf_cuts: list[
             "syst_unc": syst_unc
         }
     return results
-
 
 
 def rel_unc(sw, sw2):
@@ -141,7 +140,6 @@ def plot_results(results, ecf_cuts, plot_prefix):
         fig.savefig(f"{plot_prefix}_{str(cut)}.pdf")
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Construction of the Data/Background MC correction scale factor")
     parser.add_argument(
@@ -160,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--ddt_path',
         type=str,
-        default='./models/cutbased_ddt_map_withRT_ANv6_3d.json',
+        default='./models/cutbased_ddt_map_withRT_ANv6_mtbin.json',
         help='Path to ECF DDT file'
     )
     parser.add_argument(
@@ -180,7 +178,7 @@ if __name__ == "__main__":
     parser.add_argument(
         '--output_file',
         type=str,
-        default='./models/jetvar_model_uncertainty.json',
+        default='./models/jetvar_model_uncertainty_mtbin.json',
         help='Where to save the modelling uncertainty JSON file'
     )
     parser.add_argument(
