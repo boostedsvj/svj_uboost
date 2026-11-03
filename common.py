@@ -1251,7 +1251,7 @@ def check_if_model_exists(model_file, xrootd_url):
 # Direct selection
 SELECTION_RT_SIGNAL_REGION = 1.18
 # DDT selection for RT
-SELECTION_RTDDT_SIGNAL_REGION = 1.23
+SELECTION_RTDDT_SIGNAL_REGION = 1.20
 RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
 RT_DDT_FILE = 'models/rt_ddt_map_ANv6_mtbin.json'
 
