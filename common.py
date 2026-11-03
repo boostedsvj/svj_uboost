@@ -788,7 +788,9 @@ class VarArrHistogram(Histogram, metaclass=HistoBins):
     @classmethod
     def _create_var_array(cls,cols):
         """Method for creating the values array used to fill the histogram"""
-        return cols.to_numpy([cls.name]).flatten()
+        if isinstance(cols, Columns) or isinstance(cols, svj.Columns):
+            return cols.to_numpy([cls.name]).flatten()
+        return cols
 
 
 
@@ -1029,12 +1031,6 @@ def read_training_features(model_file):
         model = json.load(f)
         return model['features']
 
-def ddt_windowcuts(mt, pt):
-    '''
-    Basically a tool to constantly check the kinematics during the DDT processes
-    '''
-    cuts = (mt>100) & (mt<1000) & (pt>100)
-    return cuts
 
 def weighted_percentile(x, w, percent):
     """
@@ -1044,7 +1040,7 @@ def weighted_percentile(x, w, percent):
     sorted_x = x[np.argsort(x)]
     sorted_w = w[np.argsort(x)]
     # Generating the cumulative sum
-    sorted_c = np.cumsum(sorted_w)
+    sorted_c = np.cumsum(sorted_w, dtype=np.float64)
     # Scaling the cumulative sum so that the actual data points are centered at half the weight
     sorted_c = ((sorted_c - (sorted_w / 2)) / sorted_c[-1]) * 100
 
