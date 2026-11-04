@@ -191,6 +191,13 @@ def build_histogram(args=None):
         do_syst = False
 
     common.logger.info(f'Selection: {selection}')
+    # approach to large weight removal: remove the background events in isolated mT bins of their sample, before the
+    # selection, with the same event mask as the DDT map inputs (apply_DDT.make_ddt_inputs), so that the histograms
+    # contain the same background events as the maps
+    if metadata["sample_type"]=="bkg":
+        if len(cen_columns)>0:
+            cen_columns = cen_columns.select(common.compute_bkg_isolatedevt_mask(cen_columns.to_numpy(['mt']).ravel()))
+        cen_columns.cutflow['isolated_evt'] = len(cen_columns)
     cen_columns = apply_selection(cen_columns,year)
     w = None
     if metadata["sample_type"] != "data":
@@ -203,9 +210,6 @@ def build_histogram(args=None):
     VarHistogram = common.registered_varhists[hist_var]
     hist_central = VarHistogram(cen_columns, w)
     hist_central.metadata.update(metadata)
-    # approach to large weight removal: remove isolated bins from histogram
-    if metadata["sample_type"]=="bkg":
-        hist_central = hist_central.mask(common.mask_isolated_bins(hist_central.vals))
     hist_variants['central'] = hist_central
 
     if metadata["sample_type"]=="sig" and do_syst and selection!="preselection_minus":
