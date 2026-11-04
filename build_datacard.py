@@ -641,8 +641,8 @@ def do_loess(hist,span,do_gcv=False,log=False):
     from uloess import loess
     x, y, errs = get_xye(hist)
     if log:
-        # fit log(counts) with relative errors: a local quadratic in log follows a steeply falling spectrum
-        # empty bins get a negligible weight
+        # fit log(counts): a local quadratic in log follows a steeply falling spectrum
+        # uncertainty of log(counts): d(log y) = dy/y, i.e. the relative error; empty bins get a negligible weight
         filled = y>0
         errs = np.where(filled, errs/np.where(filled,y,1), 1e6)
         y = np.log(np.where(filled, y, np.min(y[filled])))
@@ -702,13 +702,20 @@ def smooth_shapes():
     mtmax = common.pull_arg('--mtmax', type=float, default=None).mtmax
     norm = not common.pull_arg('--unnorm', default=False, action="store_true", help="fit unnormalized shape").unnorm
     log = common.pull_arg('--log', default=False, action="store_true", help="smooth log(counts) instead of counts").log
+    common_span = common.pull_arg('--common-span', default=False, action="store_true", help="with --optimize: smooth all files with the largest of their optimized spans").common_span
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, f ) for f in json_files]
-        p.starmap(smooth_shape_single, args)
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f ) for f in json_files]
+        spans = [float(s) for s in p.starmap(smooth_shape_single, args)]
+        if common_span and do_opt>0:
+            # same span for all files (e.g. the signal and control regions): smooth again with the largest optimized span
+            span_common = max(spans)
+            common.logger.info(f'Common span {span_common} (optimized: {dict(zip(json_files, spans))})')
+            args = [(span_common, span_min, span_max, simple, leak_tol, min_run, gcv_tol, 0, default, target, debug, var, save, mtmin, mtmax, norm, log, span_opt, f ) for f, span_opt in zip(json_files, spans)]
+            p.starmap(smooth_shape_single, args)
 
-def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, json_file):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file):
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
 
@@ -813,6 +820,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         # record the smoothing actually applied (also without optimization)
         meta["span"] = span_val
         meta["smooth_log"] = log
+        if span_opt is not None: meta["span_optimized"] = span_opt
 
         hsmooth = hist.copy()
         hsmooth.vals = np.where((hist.vals == 0) & (pred < 0), 0.0, pred)
@@ -857,6 +865,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
     if save_all or save:
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
+    return span_val
 
 
 @scripter
