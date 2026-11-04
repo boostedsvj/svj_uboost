@@ -685,15 +685,6 @@ class Histogram:
         ans.errs[~keep] = 0
         return ans
 
-def mask_isolated_bins(counts):
-    mask_bin = []
-    for i in range(len(counts)):
-        if (i<=0 or counts[i-1]==0) and (i>=len(counts)-1 or counts[i+1]==0):
-            mask_bin.append(False)
-        else:
-            mask_bin.append(True)
-    return np.array(mask_bin)
-
 def compute_bkg_isolatedevt_mask(mT):
     """
     Given the mT array of background events from a single background sample, return a True/False array of
@@ -711,7 +702,9 @@ def compute_bkg_isolatedevt_mask(mT):
     bin_idx[bin_idx==len(mt_edges)] = len(mt_edges)-1 # put overflow into last bin
     bin_idx = bin_idx - 1 # shift to be consistent with histogram indexing
     bin_count, _ = np.histogram(mT, bins=mt_edges) # Getting the number of entries in each bin
-    mask_bin = mask_isolated_bins(bin_count)
+    # a bin is isolated if both neighbouring bins are empty (outside the range counts as empty)
+    padded = np.pad(bin_count, 1)
+    mask_bin = (padded[:-2]!=0) | (padded[2:]!=0)
     return mask_bin[bin_idx] # Extracting to per-event masking via array index
 
 def _create_binning(binw, left, right):
