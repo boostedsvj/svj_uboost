@@ -1161,7 +1161,7 @@ def create_DDT_map_dict(mt, rt_sel, var, weight, percents, cut_vals, ddt_name):
         if isinstance(var_dict_load[k], dict) and k != "metadata":
             print(k, np.all(np.array(var_dict[k]["VAR_map"]) == np.array(var_dict_load[k]["VAR_map"])))
 
-def calculate_varDDT(mt, rt_sel, var, cut_val, ddt_name, smear=1.0):
+def calculate_varDDT(mt, rt_sel, var, cut_val, ddt_name, smear=0.0):
     '''
     Applies a DDT transformation to 'var' using a DDT map in (mt, pt) space.
 
@@ -1251,7 +1251,7 @@ def check_if_model_exists(model_file, xrootd_url):
 # Direct selection
 SELECTION_RT_SIGNAL_REGION = 1.18
 # DDT selection for RT
-SELECTION_RTDDT_SIGNAL_REGION = 1.20
+SELECTION_RTDDT_SIGNAL_REGION = 1.26
 RT_DDT_PATH = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/rt_ddt/'
 RT_DDT_FILE = 'models/rt_ddt_map_ANv6_mtbin.json'
 
