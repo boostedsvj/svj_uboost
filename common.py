@@ -1382,8 +1382,6 @@ def apply_antiloosecutbased(cols, cut_val=0.09):
 
 # Relative path to the BDT
 # This specific BDT was chosen to be used during the L3 review
-bdt_model_file = 'models/svjbdt_obj_rev_version.json'
-bdt_model_file = 'models/svjbdt_mdark10_rinv03_withRTDDT_lowmassonly.json'
 bdt_model_file = 'models/svjbdt_mdark5-10_rinv0p2-0p8_withRTDDT.json'
 
 
