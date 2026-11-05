@@ -19,18 +19,17 @@ rm "${RT_DDT_FILE}" "${RTCUTBASED_DDT_FILE}" "${RTBDT_DDT_FILE}"
 HADD_FILE_ARGS="--bkg_file ${BKG_ALL_FILES} --sig_files ${SIG_ALL_FILES}"
 
 # Running the RT ddt map
-RT_ARGS_COMMON="--ddt_map_file ${RT_DDT_FILE} ${HADD_FILE_ARGS} --psuff _Run2"
+RT_ARGS_COMMON="--ddt_map_file ${RT_DDT_FILE} ${HADD_FILE_ARGS}"
 python apply_DDT.py --analysis_type RT ${RT_ARGS_COMMON} --plot DDT_map_val fom_significance
-python apply_DDT.py --analysis_type RT ${RT_ARGS_COMMON} --var_cuts 1.20 1.21 1.22 1.23 1.24 --plot bkg_scores_mt sig_scores_mt
+python apply_DDT.py --analysis_type RT ${RT_ARGS_COMMON} --var_cuts 1.20 1.22 1.24 1.26 1.28 --plot bkg_scores_mt sig_scores_mt
 
 # COmmon arguments for creating ddt maps with additional ET ddit
-#WITH_RT_ARGS="--rt_sel 1.23 --rt_ddt_file ${RT_DDT_FILE} ${HADD_FILE_ARGS} --psuff _Run2"
+WITH_RT_ARGS="--rt_sel 1.26 --rt_ddt_file ${RT_DDT_FILE} ${HADD_FILE_ARGS}"
 
 # Running the new ECF DDT with separate RT DDT
-#python apply_DDT.py --analysis_type cut-based ${WITH_RT_ARGS} --ddt_map_file ${RTCUTBASED_DDT_FILE} --plot DDT_map_val fom_significance 
-#python apply_DDT.py --analysis_type cut-based ${WITH_RT_ARGS} --ddt_map_file ${RTCUTBASED_DDT_FILE} --var_cuts 0.08 0.09 0.1 0.11 0.12  --plot bkg_scores_mt sig_scores_mt
+python apply_DDT.py --analysis_type cut-based ${WITH_RT_ARGS} --ddt_map_file ${RTCUTBASED_DDT_FILE} --plot DDT_map_val fom_significance
+python apply_DDT.py --analysis_type cut-based ${WITH_RT_ARGS} --ddt_map_file ${RTCUTBASED_DDT_FILE} --var_cuts 0.08 0.09 0.1 0.11 0.12  --plot bkg_scores_mt sig_scores_mt
 
 # Running the new BDT DTT with RT DDT
-#python apply_DDT.py --analysis_type BDT-based ${WITH_RT_ARGS} --ddt_map_file ${RTBDT_DDT_FILE} --plot DDT_map_val fom_significance
-#python apply_DDT.py --analysis_type BDT-based ${WITH_RT_ARGS} --ddt_map_file ${RTBDT_DDT_FILE} --var_cuts 0.4 0.5 0.55 --plot bkg_scores_mt sig_scores_mt
-
+python apply_DDT.py --analysis_type BDT-based ${WITH_RT_ARGS} --ddt_map_file ${RTBDT_DDT_FILE} --plot DDT_map_val fom_significance
+python apply_DDT.py --analysis_type BDT-based ${WITH_RT_ARGS} --ddt_map_file ${RTBDT_DDT_FILE} --var_cuts 0.85 0.9 --plot bkg_scores_mt sig_scores_mt
