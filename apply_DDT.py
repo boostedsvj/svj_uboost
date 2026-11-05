@@ -130,53 +130,14 @@ def make_RT_selection(mT, rT, rt_sel: float | None, rt_ddt_file: str | None):
     mask = np.ones_like(mT, dtype=bool)
     return calculate_varDDT(mT, mask, rT, rt_sel, rt_ddt_file, smear=0.0) > 0.0
 
-def get_xye(hist):
-    x = hist.binning
-    x = (x[:-1]+x[1:])/2 # bin centers
-    y = hist.vals
-    errs = hist.errs
-    return x,y,errs
-
-def do_loess(hist,span,do_gcv=False):
-    from uloess import loess
-    x, y, errs = get_xye(hist)
-    from uloess import loess
-    # safety check for empty bins w/ empty errs
-    for i,yy in enumerate(y):
-        if yy==0:
-            errs[i] = 1
-    # 1sigma interval
-    try:
-        pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
-    except np.linalg.LinAlgError as err:
-        gcv = 1e10
-        print(err)
-    if do_gcv:
-        return gcv, q_rough
-    else:
-        return pred, conf_int
-
-def consec_true_mask(mask, min_run):
-    mask = np.asarray(mask, dtype=bool)
-    if min_run <= 1:
-        return mask
-    out = np.zeros_like(mask)
-    n = len(mask)
-    i = 0
-    while i < n:
-        if not mask[i]:
-            i += 1
-            continue
-        j = i
-        while j < n and mask[j]:
-            j += 1
-        if j - i >= min_run:
-            out[i:j] = True
-        i = j
-    return out
-
 def created_smoothed_mtdist(mT, weights):
-    # Configuration constants, taking from build_datacard
+    """
+    Predefined version of the histogram smoothing. Parameters are hardcoded year, as
+    we are mainly interested in which the potential impact of applying smoothing, not
+    the details of smoothing.
+    """
+    from uloess import knee
+    from build_datacard import consec_true_mask, do_loess, get_xye
     LEAK_TOL = 1.0
     MIN_RUN = 2
     GCV_TOL = 0.0
@@ -192,7 +153,6 @@ def created_smoothed_mtdist(mT, weights):
     scans = [do_loess(hist, span, do_gcv=True) for span in spans]
     # list of pairs -> pair of lists
     gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
-    from uloess import knee
     knee_index = knee(spans, q_rough, LEAK_TOL)
     span_knee = spans[knee_index]
     q_knee = q_rough[knee_index]
