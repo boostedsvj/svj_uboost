@@ -703,19 +703,107 @@ def smooth_shapes():
     norm = not common.pull_arg('--unnorm', default=False, action="store_true", help="fit unnormalized shape").unnorm
     log = common.pull_arg('--log', default=False, action="store_true", help="smooth log(counts) instead of counts").log
     common_span = common.pull_arg('--common-span', default=False, action="store_true", help="with --optimize: smooth all files with the largest of their optimized spans").common_span
+    smooth_ratio = common.pull_arg('--smooth-ratio', default=False, action="store_true",
+        help="signal systematics: smooth the ratio variation/central and apply it to the smoothed central, instead of "
+             "smoothing each variation separately; the ratio's span is chosen as the central's (--optimize: GCV)").smooth_ratio
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f ) for f in json_files]
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f, smooth_ratio) for f in json_files]
         spans = [float(s) for s in p.starmap(smooth_shape_single, args)]
         if common_span and do_opt>0:
             # same span for all files (e.g. the signal and control regions): smooth again with the largest optimized span
             span_common = max(spans)
             common.logger.info(f'Common span {span_common} (optimized: {dict(zip(json_files, spans))})')
-            args = [(span_common, span_min, span_max, simple, leak_tol, min_run, gcv_tol, 0, default, target, debug, var, save, mtmin, mtmax, norm, log, span_opt, f ) for f, span_opt in zip(json_files, spans)]
+            args = [(span_common, span_min, span_max, simple, leak_tol, min_run, gcv_tol, 0, default, target, debug, var, save, mtmin, mtmax, norm, log, span_opt, f, smooth_ratio) for f, span_opt in zip(json_files, spans)]
             p.starmap(smooth_shape_single, args)
 
-def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file):
+def ratio_to_central(hist, raw_central):
+    """the ratio raw variation / raw central smoothed by smooth_ratio_to_central, with the central's relative MC error
+    as weight (see there)"""
+    ok = raw_central.vals > 0
+    ratio = hist.copy()
+    ratio.vals = np.where(ok, hist.vals / np.where(ok, raw_central.vals, 1.), 1.)
+    ratio.errs = np.where(ok, raw_central.errs / np.where(ok, raw_central.vals, 1.), 1.)
+    return ratio
+
+
+def smooth_ratio_to_central(hist, raw_central, central_smooth, span):
+    """Variation = smoothed central x LOESS-smoothed ratio of the raw variation to the raw central.
+    Variations are made from the same MC events as the central template, so their bin-to-bin differences are
+    migrations with the MC statistical noise of the sample; smoothing each variation separately (with the central's
+    span) keeps that noise in the ratio where the MC statistics are low, and the fit then sees a noisy shape
+    systematic scaled by r. The ratio is smoothed with weights from the central's relative MC precision per bin.
+    This treats the variation as the same events as the central in each bin, i.e. it assumes no bin migration: true for
+    the weight-based systematics (scale, PS, PU, PDF, jetvar), an approximation for JEC, JER and JES, which are applied
+    at selection level and can move events between bins."""
+    pred, _ = do_loess(ratio_to_central(hist, raw_central), span=span)
+    out = central_smooth.copy()
+    out.vals = central_smooth.vals * pred
+    out.errs = central_smooth.errs * pred
+    return out
+
+
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file, smooth_ratio=False):
+    # GCV optimization of the span (--optimize) for a histogram: returns the span and the scan's metadata
+    def optimize_span(hist, log=False):
+        spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
+        scans = [do_loess(hist, span, do_gcv=True, log=log) for span in spans]
+        # list of pairs -> pair of lists
+        gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
+        if simple:
+            span_chosen = spans[np.argmin(gcvs)]
+            if debug: print(f"Chosen span = {span_chosen}")
+        else:
+            # optimization procedure:
+            # 1. find "knee" where roughness_leakage stops decreasing rapidly
+            # 2. mask out fluctuations using min_run
+            # 3. pick smallest of these spans w/ gcv in tolerance
+            from uloess import knee
+            knee_index = knee(spans, q_rough, leak_tol)
+            span_knee = spans[knee_index]
+            q_knee = q_rough[knee_index]
+            # this is equivalent to applying the tolerance to log(q_rough)
+            q_thresh = q_knee**leak_tol
+            if debug: print("q_thresh",q_thresh)
+            # only allow tolerance to include smaller spans in feasible range, not larger ones
+            feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
+            if min_run>1:
+                feasible = consec_true_mask(feasible_raw, min_run)
+            # fallback: ignore consecutive run requirement
+            if not np.any(feasible):
+                if debug: print("Warning: ignoring consecutive run requirement")
+                feasible = feasible_raw
+            if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
+            best_feasible_gcv = np.min(gcvs[feasible])
+            feasible_indices = np.where(feasible)[0]
+            best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
+            best_feasible_gcv_span = spans[best_feasible_idx]
+            if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
+            plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
+            if gcv_tol>0:
+                plateau_mask = feasible & (gcvs < plateau_gcv)
+                chosen_idx = np.flatnonzero(plateau_mask)[0]
+            else:
+                chosen_idx = best_feasible_idx
+            if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
+            span_chosen = spans[chosen_idx]
+        if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
+        meta = {}
+        meta["span"] = span_chosen
+        meta["gcvs"] = list(gcvs)
+        if not simple:
+            meta["q_rough"] = list(q_rough)
+            meta["q_knee"] = q_knee
+            meta["q_thresh"] = q_thresh
+            meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
+            meta["best_feasible_gcv"] = best_feasible_gcv
+            meta["plateau_gcv"] = plateau_gcv
+        meta["span_min"] = span_min
+        meta["span_max"] = span_max
+        meta["span_pts"] = do_opt
+        return span_chosen, meta
+
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
 
@@ -751,70 +839,31 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         target = var
         variations = [var]
         save_all = False
+    central_uncut = None     # smoothed central before the mT cut (for --smooth-ratio)
     for var in variations:
         hist = mths[var]
         hyield = hist.vals.sum()
         common.logger.info(f'{var} integral: {hyield}')
         meta = hist.metadata
 
+        if smooth_ratio and var != default and h_default.metadata["sample_type"] == "sig":
+            if central_uncut is None:
+                raise ValueError("--smooth-ratio needs the normalised central template smoothed before the variations "
+                                 "(not available with --unnorm, --variation, or a --target other than the central)")
+            # span chosen as for the central: GCV optimization (--optimize) of the ratio, else --span
+            rspan = optimize_span(ratio_to_central(hist, mths[default]))[0] if do_opt>0 else span_val
+            hsmooth = smooth_ratio_to_central(hist, mths[default], central_uncut, rspan).cut(**cut_args)
+            meta["ratio_span"] = rspan
+            hsmooth.metadata = meta
+            mths_new[var] = hsmooth
+            continue
+
         # normalize shape to unit area, then scale prediction by original yield
         if norm: hist = hist*(1./hyield)
 
         if do_opt>0 and (var==target or len(target)==0):
-            spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
-            scans = [do_loess(hist, span, do_gcv=True, log=log) for span in spans]
-            # list of pairs -> pair of lists
-            gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
-            if simple:
-                span_val = spans[np.argmin(gcvs)]
-                if debug: print(f"Chosen span = {span_val}")
-            else:
-                # optimization procedure:
-                # 1. find "knee" where roughness_leakage stops decreasing rapidly
-                # 2. mask out fluctuations using min_run
-                # 3. pick smallest of these spans w/ gcv in tolerance
-                from uloess import knee
-                knee_index = knee(spans, q_rough, leak_tol)
-                span_knee = spans[knee_index]
-                q_knee = q_rough[knee_index]
-                # this is equivalent to applying the tolerance to log(q_rough)
-                q_thresh = q_knee**leak_tol
-                if debug: print("q_thresh",q_thresh)
-                # only allow tolerance to include smaller spans in feasible range, not larger ones
-                feasible_raw = (q_rough <= q_knee) | ((q_rough <= q_thresh) & (spans < span_knee))
-                if min_run>1:
-                    feasible = consec_true_mask(feasible_raw, min_run)
-                # fallback: ignore consecutive run requirement
-                if not np.any(feasible):
-                    if debug: print("Warning: ignoring consecutive run requirement")
-                    feasible = feasible_raw
-                if debug: print(f"Feasible spans: {np.min(spans[feasible])}, {np.max(spans[feasible])}")
-                best_feasible_gcv = np.min(gcvs[feasible])
-                feasible_indices = np.where(feasible)[0]
-                best_feasible_idx = feasible_indices[np.argmin(gcvs[feasible])]
-                best_feasible_gcv_span = spans[best_feasible_idx]
-                if debug: print(f"Best feasible span = {best_feasible_gcv_span} with gcv = {best_feasible_gcv}")
-                plateau_gcv = best_feasible_gcv*(1.0+gcv_tol)
-                if gcv_tol>0:
-                    plateau_mask = feasible & (gcvs < plateau_gcv)
-                    chosen_idx = np.flatnonzero(plateau_mask)[0]
-                else:
-                    chosen_idx = best_feasible_idx
-                if debug: print(f"Lowest feasible span = {spans[chosen_idx]} with gcv = {gcvs[chosen_idx]}")
-                span_val = spans[chosen_idx]
-            if debug: print('\n'.join(['{} {} {}'.format(span,gcv,q) for span,gcv,q in zip(spans,gcvs,q_rough)]))
-            meta["span"] = span_val
-            meta["gcvs"] = list(gcvs)
-            if not simple:
-                meta["q_rough"] = list(q_rough)
-                meta["q_knee"] = q_knee
-                meta["q_thresh"] = q_thresh
-                meta["feasible_spans"] = [np.min(spans[feasible]), np.max(spans[feasible])]
-                meta["best_feasible_gcv"] = best_feasible_gcv
-                meta["plateau_gcv"] = plateau_gcv
-            meta["span_min"] = span_min
-            meta["span_max"] = span_max
-            meta["span_pts"] = do_opt
+            span_val, meta_opt = optimize_span(hist, log)
+            meta.update(meta_opt)
 
         pred, conf = do_loess(hist,span=span_val,log=log)
         # record the smoothing actually applied (also without optimization)
@@ -829,6 +878,8 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         # cuts applied *after* interpolation
         if norm:
             hsmooth = hsmooth*hyield
+            if var == default:
+                central_uncut = hsmooth.copy()
             hsmooth = hsmooth.cut(**cut_args)
         mths_new[var] = hsmooth
         if var=='central':
