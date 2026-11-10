@@ -191,6 +191,13 @@ def build_histogram(args=None):
         do_syst = False
 
     common.logger.info(f'Selection: {selection}')
+    # approach to large weight removal: remove the background events in isolated mT bins of their sample, before the
+    # selection, with the same event mask as the DDT map inputs (apply_DDT.make_ddt_inputs), so that the histograms
+    # contain the same background events as the maps
+    if metadata["sample_type"]=="bkg":
+        if len(cen_columns)>0:
+            cen_columns = cen_columns.select(common.compute_bkg_isolatedevt_mask(cen_columns.to_numpy(['mt']).ravel()))
+        cen_columns.cutflow['isolated_evt'] = len(cen_columns)
     cen_columns = apply_selection(cen_columns,year)
     w = None
     if metadata["sample_type"] != "data":
@@ -203,9 +210,6 @@ def build_histogram(args=None):
     VarHistogram = common.registered_varhists[hist_var]
     hist_central = VarHistogram(cen_columns, w)
     hist_central.metadata.update(metadata)
-    # approach to large weight removal: remove isolated bins from histogram
-    if metadata["sample_type"]=="bkg":
-        hist_central = hist_central.mask(common.mask_isolated_bins(hist_central.vals))
     hist_variants['central'] = hist_central
 
     if metadata["sample_type"]=="sig" and do_syst and selection!="preselection_minus":
@@ -633,13 +637,20 @@ def get_xye(hist):
     errs = hist.errs
     return x,y,errs
 
-def do_loess(hist,span,do_gcv=False):
+def do_loess(hist,span,do_gcv=False,log=False):
     from uloess import loess
     x, y, errs = get_xye(hist)
-    # safety check for empty bins w/ empty errs
-    for i,yy in enumerate(y):
-        if yy==0:
-            errs[i] = 1
+    if log:
+        # fit log(counts): a local quadratic in log follows a steeply falling spectrum
+        # uncertainty of log(counts): d(log y) = dy/y, i.e. the relative error; empty bins get a negligible weight
+        filled = y>0
+        errs = np.where(filled, errs/np.where(filled,y,1), 1e6)
+        y = np.log(np.where(filled, y, np.min(y[filled])))
+    else:
+        # safety check for empty bins w/ empty errs
+        for i,yy in enumerate(y):
+            if yy==0:
+                errs[i] = 1
     # 1sigma interval
     try:
         pred, conf_int, gcv, q_rough = loess(x, y, errs, deg=2, alpha=0.683, span=span)
@@ -648,6 +659,8 @@ def do_loess(hist,span,do_gcv=False):
         print(err)
     if do_gcv:
         return gcv, q_rough
+    elif log:
+        return np.exp(pred), tuple(np.exp(c) for c in conf_int)
     else:
         return pred, conf_int
 
@@ -688,13 +701,21 @@ def smooth_shapes():
     mtmin = common.pull_arg('--mtmin', type=float, default=None).mtmin
     mtmax = common.pull_arg('--mtmax', type=float, default=None).mtmax
     norm = not common.pull_arg('--unnorm', default=False, action="store_true", help="fit unnormalized shape").unnorm
+    log = common.pull_arg('--log', default=False, action="store_true", help="smooth log(counts) instead of counts").log
+    common_span = common.pull_arg('--common-span', default=False, action="store_true", help="with --optimize: smooth all files with the largest of their optimized spans").common_span
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
-        p.starmap(smooth_shape_single, args)
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f ) for f in json_files]
+        spans = [float(s) for s in p.starmap(smooth_shape_single, args)]
+        if common_span and do_opt>0:
+            # same span for all files (e.g. the signal and control regions): smooth again with the largest optimized span
+            span_common = max(spans)
+            common.logger.info(f'Common span {span_common} (optimized: {dict(zip(json_files, spans))})')
+            args = [(span_common, span_min, span_max, simple, leak_tol, min_run, gcv_tol, 0, default, target, debug, var, save, mtmin, mtmax, norm, log, span_opt, f ) for f, span_opt in zip(json_files, spans)]
+            p.starmap(smooth_shape_single, args)
 
-def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file):
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
 
@@ -741,7 +762,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
 
         if do_opt>0 and (var==target or len(target)==0):
             spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
-            scans = [do_loess(hist, span, do_gcv=True) for span in spans]
+            scans = [do_loess(hist, span, do_gcv=True, log=log) for span in spans]
             # list of pairs -> pair of lists
             gcvs, q_rough = [np.array(qty) for qty in zip(*scans)]
             if simple:
@@ -795,7 +816,11 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
             meta["span_max"] = span_max
             meta["span_pts"] = do_opt
 
-        pred, conf = do_loess(hist,span=span_val)
+        pred, conf = do_loess(hist,span=span_val,log=log)
+        # record the smoothing actually applied (also without optimization)
+        meta["span"] = span_val
+        meta["smooth_log"] = log
+        if span_opt is not None: meta["span_optimized"] = span_opt
 
         hsmooth = hist.copy()
         hsmooth.vals = np.where((hist.vals == 0) & (pred < 0), 0.0, pred)
@@ -840,6 +865,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
     if save_all or save:
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
+    return span_val
 
 
 @scripter
