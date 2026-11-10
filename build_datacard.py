@@ -201,7 +201,6 @@ def build_histogram(args=None):
 
     # Defining the histogram type to use
     VarHistogram = common.registered_varhists[hist_var]
-
     hist_central = VarHistogram(cen_columns, w)
     hist_central.metadata.update(metadata)
     # approach to large weight removal: remove isolated bins from histogram
@@ -652,6 +651,25 @@ def do_loess(hist,span,do_gcv=False):
     else:
         return pred, conf_int
 
+def consec_true_mask(mask, min_run):
+    mask = np.asarray(mask, dtype=bool)
+    if min_run <= 1:
+        return mask
+    out = np.zeros_like(mask)
+    n = len(mask)
+    i = 0
+    while i < n:
+        if not mask[i]:
+            i += 1
+            continue
+        j = i
+        while j < n and mask[j]:
+            j += 1
+        if j - i >= min_run:
+            out[i:j] = True
+        i = j
+    return out
+
 @scripter
 def smooth_shapes():
     span_val = common.pull_arg('--span', type=float, default=0.25, help="span value").span
@@ -676,28 +694,9 @@ def smooth_shapes():
         args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, f ) for f in json_files]
         p.starmap(smooth_shape_single, args)
 
-
 def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, json_file):
     # keep only regions with at least min_run consecutive True values
     # (avoid one-point outliers)
-    def consec_true_mask(mask, min_run):
-        mask = np.asarray(mask, dtype=bool)
-        if min_run <= 1:
-            return mask
-        out = np.zeros_like(mask)
-        n = len(mask)
-        i = 0
-        while i < n:
-            if not mask[i]:
-                i += 1
-                continue
-            j = i
-            while j < n and mask[j]:
-                j += 1
-            if j - i >= min_run:
-                out[i:j] = True
-            i = j
-        return out
 
     with open(json_file) as f:
         mths = json.load(f, cls=common.Decoder)
