@@ -457,6 +457,16 @@ class Plot:
         ratio = np.ones(hist.nbins) if denominator is None else hist.vals / denominator.vals
         l = self.top.step(hist.binning[:-1], hist.vals, where='post', label=label)[0]
         self.bot.step(hist.binning[:-1], ratio, where='post', label=label, color=l.get_color())
+        return l.get_color()
+
+    def plot_points(self, hist, denominator=None, label=None, color=None):
+        """hist as points with its errors, e.g. the raw template next to its smoothed version (ratio panel: only with a
+        denominator)"""
+        x = (hist.binning[:-1]+hist.binning[1:])/2
+        self.top.errorbar(x, hist.vals, hist.errs, fmt='o', ms=4, color=color, label=label)
+        if denominator is not None:
+            ratio = np.divide(hist.vals, denominator.vals, out=np.full(hist.nbins, np.nan), where=denominator.vals>0)
+            self.bot.plot(x, ratio, 'o', ms=4, mfc='none', color=color)
 
     def set_xlim(self, *args, **kwargs):
         self.bot.set_xlim(*args, **kwargs)
@@ -549,19 +559,28 @@ def make_stat_combined(mths,sysyear):
 def plot_systematics():
     hist_var = common.pull_arg('--hist_var', type=str, default='mt').hist_var
     yrange = common.pull_arg('--yrange', type=float, nargs=2, default=None).yrange
+    raw_file = common.pull_arg('--raw', type=str, default=None, help="unsmoothed (merged) file of the same signal: "
+        "also draw its templates as points, and in the ratio panel each raw variation / raw central").raw
+    syst_list = common.pull_arg('--systs', type=str, nargs='*', default=None, help="only these systematics").systs
     json_file = common.pull_arg('jsonfile', type=str).jsonfile
     change_bin_width(hist_var)
-    with open(json_file) as f:
-        mths = json.load(f, cls=common.Decoder)
+    def load(file):
+        with open(file) as f:
+            mths = json.load(f, cls=common.Decoder)
+        years = mths['central'].metadata['year']
+        if not isinstance(years,list): years = [years]
+        for year in years:
+            mths = make_stat_combined(mths,get_sysyear(year))
+        return rebin_dict(mths, hist_var), years
+    mths, years = load(json_file)
     meta = mths['central'].metadata
-    years = meta['year']
-    if not isinstance(years,list): years = [years]
     systs = get_systs(years=years,smooth="smooth" in json_file)
-    for year in years:
-        sysyear = get_sysyear(year)
-        mths = make_stat_combined(mths,sysyear)
-
-    mths = rebin_dict(mths, hist_var)
+    if syst_list: systs = [syst for syst in systs if syst in syst_list]
+    raw = None
+    if raw_file is not None:
+        # same mT range as the (smoothed) input
+        xmin, xmax = mths['central'].binning[0], mths['central'].binning[-1]
+        raw = {k: h.cut(xmin=xmin, xmax=xmax) for k, h in load(raw_file)[0].items() if isinstance(h, common.Histogram)}
     n = mths['central'].vals.sum()
     common.logger.info(f'central integral: {n}')
     common.logger.info(f'central metadata:\n{mths["central"].metadata}')
@@ -572,11 +591,17 @@ def plot_systematics():
 
     for syst in systs:
         plot = Plot(meta)
-        plot.plot_hist(mths['central'], label='Central')
-        plot.plot_hist(mths[f'{syst}_up'], mths['central'], f'{syst} up')
-        plot.plot_hist(mths[f'{syst}_down'], mths['central'], f'{syst} down')
-        if syst == "jetvar":
-            plot.plot_hist(mths[f'{syst}_none'], mths['central'], f'{syst} none')
+        names = ['up', 'down'] + (['none'] if syst == "jetvar" else [])
+        colors = {'central': plot.plot_hist(mths['central'], label='Central')}
+        for name in names:
+            h = mths[f'{syst}_{name}']
+            span = f" (ratio span {h.metadata['ratio_span']:g})" if 'ratio_span' in h.metadata else ''
+            colors[name] = plot.plot_hist(h, mths['central'], f'{syst} {name}{span}')
+        if raw is not None:
+            plot.plot_points(raw['central'], label='Central, raw', color=colors['central'])
+            for name in names:
+                if f'{syst}_{name}' in raw:
+                    plot.plot_points(raw[f'{syst}_{name}'], raw['central'], f'{syst} {name}, raw', colors[name])
         if yrange is not None:
             plot.bot.set_ylim(yrange[0],yrange[1])
         plot.save(f'{outdir}/{syst}.png')
