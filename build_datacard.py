@@ -102,10 +102,12 @@ def build_histogram(args=None):
         year = common.pull_arg('--year', type=str, default=None, help='year (overrides metadata)').year
         fullyear = common.pull_arg('--fullyear', action="store_true", help='treat 2018 as one year instead of splitting into pre and post').fullyear
         skimfile = common.pull_arg('skimfile', type=str).skimfile
+        outdir = common.pull_arg('--outdir', type=str, default=None, help='output directory (default: hists_<today>)').outdir
         change_bin_width(hist_var)
     else:
-        # Use passed input
-        selection, hist_var, lumi, year, fullyear, skimfile = args
+        # Use passed input (output directory optional)
+        selection, hist_var, lumi, year, fullyear, skimfile = args[:6]
+        outdir = args[6] if len(args)>6 else None
 
     def get_variation(var):
         return skimfile.replace(".npz",f"_{var}.npz")
@@ -180,8 +182,8 @@ def build_histogram(args=None):
 
     # process 2018 samples twice as PRE and POST
     if year=="2018" and not fullyear:
-        outfiles1 = build_histogram((selection,hist_var,None,"2018PRE",False,skimfile))
-        outfiles2 = build_histogram((selection,hist_var,None,"2018POST",False,skimfile))
+        outfiles1 = build_histogram((selection,hist_var,None,"2018PRE",False,skimfile,outdir))
+        outfiles2 = build_histogram((selection,hist_var,None,"2018POST",False,skimfile,outdir))
         return outfiles1+outfiles2
 
     # extract options from selection
@@ -286,7 +288,9 @@ def build_histogram(args=None):
 
     # save cutflow after applying final selection & after doing any copying (to avoid duplication)
     hist_variants['central'].cutflow = cen_columns.cutflow.copy()
-    outdir = f'hists_{strftime("%Y%m%d")}'
+    # the date is taken once per call of build_all_histograms (--outdir), not per file: a run across midnight must not
+    # split its histograms over two directories
+    if outdir is None: outdir = f'hists_{strftime("%Y%m%d")}'
     os.makedirs(outdir, exist_ok=True)
     process = osp.basename(skimfile).replace(".npz","")
     if metadata["sample_type"]=="data":
@@ -308,12 +312,13 @@ def build_all_histograms():
     hist_var_list = common.pull_arg("--hist_var_list", type=str, nargs='*', default=['mt']).hist_var_list
     fullyear = common.pull_arg('--fullyear', action="store_true", help='treat 2018 as one year instead of splitting into pre and post').fullyear
     threads = common.pull_arg('--threads', type=int, default=None).threads
+    outdir = common.pull_arg('--outdir', type=str, default=f'hists_{strftime("%Y%m%d")}', help='output directory (default: hists_<today>)').outdir
     skimdir = common.pull_arg('skimdir', type=str).skimdir
 
     skims = expand_wildcards(skimdir)
     for hist_var in hist_var_list:
         change_bin_width(hist_var)
-        args = [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
+        args = [(selection, hist_var, None, None, fullyear, skim, outdir) for skim in skims]
         if threads==0:
             for arg in args:
                 build_histogram(arg)
@@ -330,6 +335,7 @@ def merge_histograms():
     hist_var = common.pull_arg("--hist_var", type=str,default='mt').hist_var
     cat = common.pull_arg('--cat', type=str, required=True, choices=['sig','bkg','data']).cat
     years = common.pull_arg('--years', type=str, default=["2016","2017","2018PRE","2018POST"], nargs='*').years
+    outfile_arg = common.pull_arg('--outfile', type=str, default=None, help='output file (bkg, data; default: name from the selection and binning)').outfile
     if histdir[-1]!='/': histdir += '/'
 
     change_bin_width(hist_var)
@@ -362,7 +368,8 @@ def merge_histograms():
         else:
             outfile = f'{outdir}/{proc}_sel-{selection}_{hist_var}.json'
         hists = rebin_dict(hists, hist_var)
-        outfile = rebin_name(outfile, hist_var)
+        outfile = rebin_name(outfile, hist_var) if outfile_arg is None else outfile_arg
+        os.makedirs(osp.dirname(osp.abspath(outfile)), exist_ok=True)
         common.logger.info(f'Dumping merged histograms to {outfile}')
         with open(outfile, 'w') as f:
             json.dump(hists, f, cls=common.Encoder, indent=4)

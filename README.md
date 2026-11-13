@@ -206,10 +206,11 @@ the optimization of the smoothing span via generalized cross-validation uses the
 Histograms are then merged across all data-taking years and smoothed in some cases.
 
 The commands to perform all steps (histograms, merging, smoothing) for all categories (data, background, signal) are executed by `build_all.sh`.
-The desired selection(s) can be specified using the `--sels` argument (and are internally expanded to include the anti-tag control regions):
+The desired selection(s) can be specified using the `--sels` argument (and are internally expanded to include the anti-tag control regions, by default only the antiloose one; `--crs "anti antiloose"` adds the anti region):
 ```bash
 ./build_all.sh --sels "rtcutbased_ddt=0.1 rtbdt=0.85"
 ```
+The script stops at the first failing step. Without data skims, add `--no_data`.
 
 These merged, smoothed json files are the inputs to the limit setting. The signal, background, and (optionally) data are supplied separately.
 
