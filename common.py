@@ -11,6 +11,7 @@ import json
 import tqdm
 import multiprocessing as mp
 import multiprocessing.pool
+import concurrent.futures
 from cycler import cycler
 
 np.random.seed(1001)
@@ -335,34 +336,69 @@ def quick_subplots(*args, **kwargs):
         except Exception:
             pass
 
+def _cpu_count():
+    # CPUs this process may run on (e.g. a batch slot), not all cores of the machine as mp.cpu_count()
+    if hasattr(os, 'process_cpu_count'): # python >= 3.13 (also honours PYTHON_CPU_COUNT)
+        return os.process_cpu_count() or 1
+    if hasattr(os, 'sched_getaffinity'):
+        return len(os.sched_getaffinity(0))
+    return os.cpu_count() or 1
+
 def _mp_count_compute(factor=None, max_thread=None):
-    # Simple switch for how many workers we should open in a pool
+    # Simple switch for how many workers we should open in a pool (at least one)
+    n_cpu = _cpu_count()
     if factor is None:
-        factor = 0.75 if mp.cpu_count() < 16 else 0.5
+        factor = 0.75 if n_cpu < 16 else 0.5
     if max_thread is None:
-        max_thread = mp.cpu_count()
-    return int(min([mp.cpu_count() * factor , max_thread]))
+        max_thread = n_cpu
+    return max(1, int(min([n_cpu * factor , max_thread])))
+
+class _ProcessPool:
+    """
+    map/starmap on a concurrent.futures process pool, replacing mp.Pool: a worker that dies (e.g. killed by the batch
+    system) raises BrokenProcessPool instead of hanging forever, and the first failing task cancels the tasks that have
+    not started yet. The workers are forked, so they see module state set in the parent before the pool is created
+    (e.g. the binning set by build_datacard.change_bin_width), whatever the default start method of the platform.
+    """
+    def __init__(self, n_workers):
+        self.executor = concurrent.futures.ProcessPoolExecutor(n_workers, mp_context=mp.get_context('fork'))
+
+    def _results(self, futures):
+        try:
+            return [f.result() for f in futures]
+        except BaseException:
+            for f in futures: f.cancel()
+            raise
+
+    def map(self, func, iterable):
+        return self._results([self.executor.submit(func, arg) for arg in iterable])
+
+    def starmap(self, func, iterable):
+        return self._results([self.executor.submit(func, *args) for args in iterable])
 
 @contextmanager
 def mp_pool(factor=None, max_thread=None):
+    n_threads = _mp_count_compute(factor, max_thread)
+    logger.info(f"Creating process pool with {n_threads} workers")
+    pool = _ProcessPool(n_threads)
     try:
-        n_threads = _mp_count_compute(factor, max_thread)
-        logger.info(f"Creating mp.Pool with {n_threads} workers")
-        yield mp.Pool(n_threads)
+        yield pool
     finally:
-        pass
+        pool.executor.shutdown(wait=True, cancel_futures=True)
 
 
 @contextmanager
 def mp_thread_pool(factor=None, max_thread=None):
     # Threading is required for if the function call uses variables that are
     # defined outside the function scope
+    n_threads = _mp_count_compute(factor, max_thread)
+    print(f"Creating thread pool with {n_threads} threads")
+    pool = mp.pool.ThreadPool(n_threads)
     try:
-        n_threads = _mp_count_compute(factor, max_thread)
-        print(f"Creating thread pool with {n_threads} threads")
-        yield mp.pool.ThreadPool(n_threads)
+        yield pool
     finally:
-        pass
+        pool.close()
+        pool.join()
 
 #__________________________________________________
 # Automatic cross section getter
@@ -527,14 +563,22 @@ def get_single_event_weight(weights):
 def add_cutflows(*objs):
     # add cutflows if present, accounting for weights
     keys = [list(obj.cutflow.keys()) if hasattr(obj,'cutflow') else [] for obj in objs]
-    if keys and all(keys) and all(k == keys[0] for k in keys):
-        weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
-        return OrderedDict((k, sum(obj.cutflow[k]*weight for obj,weight in zip(objs,weights))) for k in keys[0])
-    else:
-        if keys and all(keys):
-            keylist = '\n'.join(f'  {k}' for k in keys)
-            logger.warning(f'Unable to add cutflows with different keys:\n{keylist}')
+    if not (keys and all(keys)):
         return OrderedDict()
+    # the cut lists can differ by cuts applied to some of the objects only (e.g. hem_veto, 2018POST only): add up the
+    # union of the cuts, in order, where an object without a cut counts the events after its previous cut
+    union = []
+    for klist in keys:
+        for i,k in enumerate(klist):
+            if k in union: continue
+            before = [union.index(p) for p in klist[:i] if p in union]
+            union.insert(max(before)+1 if before else 0, k)
+    def count(obj, k):
+        i = union.index(k)
+        while i>=0 and union[i] not in obj.cutflow: i -= 1
+        return obj.cutflow[union[i]] if i>=0 else next(iter(obj.cutflow.values()))
+    weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
+    return OrderedDict((k, sum(count(obj,k)*weight for obj,weight in zip(objs,weights))) for k in union)
 
 class Histogram:
     """
@@ -1177,6 +1221,8 @@ def calculate_varDDT(mt, rt_sel, var, cut_val, ddt_name, smear=0.0):
 
     if str(cut_val) not in var_dict:
         raise KeyError(f"The key {cut_val} does not exist in the dictionary.")
+    if not isinstance(var_dict[str(cut_val)], dict) or "MT_edges" not in var_dict[str(cut_val)]:
+        raise ValueError(f"{ddt_name} is not an m_T-binned DDT map (no MT_edges for {cut_val}), e.g. an old 3D map")
 
     # Get the bin edges
     MT_edges = np.array(var_dict[str(cut_val)]["MT_edges"])
@@ -1233,13 +1279,15 @@ def check_if_model_exists(model_file, xrootd_url):
     # Check if the file exists locally
     if not os.path.exists(model_file):
         print(f"File {model_file} not found. Downloading from {xrootd_url}...")
+        # download to a temporary file, then rename: parallel workers can download the same file at the same time
+        tmp_file = f"{model_file}.{os.getpid()}.tmp"
         try:
             os.makedirs(os.path.dirname(model_file), exist_ok=True)  # Ensure directory exists
-            subprocess.run(["xrdcp", xrootd_url+model_file, model_file], check=True)
+            subprocess.run(["xrdcp", "-f", xrootd_url+model_file, tmp_file], check=True)
+            os.replace(tmp_file, model_file)
             print(f"Downloaded {model_file} successfully.")
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Error downloading {model_file}: {e}")
-            return None
 
 # Direct selection
 SELECTION_RT_SIGNAL_REGION = 1.18
@@ -1272,7 +1320,11 @@ def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PA
 
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+# old 3D map, not readable by calculate_varDDT (m_T-binned maps only): the selections without the RT DDT
+# (cutbased_ddt, anticutbased_ddt, antiloosecutbased_ddt) need an m_T-binned map without RT first
 DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6_3d.json'
+# the map of the RT DDT selections: the signal region and both control regions take the tagger DDT value from
+# rtcutbased_ddt_val with this map, so that they use the same thresholds
 DDT_FILE_CUTBASED_RT_DDT = './models/cutbased_ddt_map_withRT_ANv6_mtbin.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
@@ -1304,7 +1356,7 @@ def apply_cutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xroo
 
 def apply_rtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
     cols = apply_rt_signalregion_ddt(cols)
-    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val > 0.0)
     cols.cutflow['cutbased_rt_ddt'] = len(cols)
     return cols
@@ -1333,9 +1385,9 @@ def apply_anticutbased(cols, cut_val=0.09):
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion_ddt(cols)
-    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
@@ -1351,9 +1403,15 @@ def _calc_rtcutbased_ddt_val(cols, lumi, cut_val, rt_ddt_file, rt_cut_val, ddt_m
     t_mask = np.ones_like(mT, dtype=bool)
     rt_mask = (rT > rt_cut_val)
     if rt_ddt_file is not None:
+        check_if_model_exists(rt_ddt_file, RT_DDT_PATH)
         rt_mask = calculate_varDDT(mT, t_mask, rT, rt_cut_val, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
     ddt_val = calculate_varDDT(mT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=RT_DDT_SMEAR)
     return ddt_val
+
+def rtcutbased_ddt_val(cols, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    # cut-based tagger DDT value of the RT DDT selections (double DDT), the same for the signal region (> 0 after the
+    # RT DDT), the anti region (< 0 after the RT DDT) and the antiloose region (< 0, no RT selection)
+    return _calc_rtcutbased_ddt_val(cols, None, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
 
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
@@ -1363,7 +1421,7 @@ def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBA
     return cols
 
 def apply_antiloosertcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
-    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
@@ -1427,7 +1485,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
         cols.cutflow['ddt(bdt)'] = len(cols)
     return cols
 
-def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_PATH_BDTBASED,xrootd_url=DDT_PATH_BDTBASED):
+def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_FILE_BDTBASED_RT_DDT,xrootd_url=DDT_PATH_BDTBASED):
     # Running the BDT calculation. If the RT_DDT files is provided, the double DDT method will be used
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
@@ -1442,6 +1500,7 @@ def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,d
     t_mask = np.ones_like(mT, dtype=bool)
     rt_mask = (rT > SELECTION_RT_SIGNAL_REGION)
     if rt_ddt_file is not None:
+        check_if_model_exists(rt_ddt_file, RT_DDT_PATH)
         rt_mask = calculate_varDDT(mT, t_mask, rT, SELECTION_RTDDT_SIGNAL_REGION, rt_ddt_file, smear=RT_DDT_SMEAR) > 0.0
     bdt_ddt_score = calculate_varDDT(mT, rt_mask, score, wp, ddt_map_file, smear=RT_DDT_SMEAR)
 
@@ -1467,6 +1526,7 @@ def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
     pT = cols.to_numpy(['pt']).ravel()
     ecf = cols.to_numpy(['ecfm2b1']).ravel()
     m = np.ones_like(mT, dtype=bool)
+    check_if_model_exists(DDT_FILE_CUTBASED_RT_DDT, DDT_PATH_CUTBASED) # also needed by the BDT selections
     ddt_val = calculate_varDDT(mT, m, ecf, 0.1, DDT_FILE_CUTBASED_RT_DDT, smear=RT_DDT_SMEAR)
 
     bin_idx = np.digitize(ddt_val, bins=var_bin)
@@ -1477,6 +1537,14 @@ def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
     else:
         return sf[bin_idx] * (1-unc[bin_idx])
 
+
+def check_all_files():
+    # these are all the files we are currently using, not all the possible files
+    check_if_model_exists(RT_DDT_FILE, RT_DDT_PATH)
+    check_if_model_exists(DDT_FILE_CUTBASED_RT_DDT, DDT_PATH_CUTBASED)
+    check_if_model_exists(DDT_FILE_BDTBASED_RT_DDT, DDT_PATH_BDTBASED)
+    check_if_model_exists(bdt_model_file, DDT_PATH_BDTBASED)
+    check_if_model_exists(SF_FILE, SF_PATH)
 
 class InvalidSelectionException(Exception):
     def __init__(self, msg='Unknown selection {}; choices are "preselection", "cutbased", or "bdt=X.XXX".', sel="", *args, **kwargs):
