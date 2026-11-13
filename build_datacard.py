@@ -735,10 +735,15 @@ def smooth_shapes():
              "smoothing each variation separately; the ratio's span is chosen as the central's (--optimize: GCV)").smooth_ratio
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
+    if common_span and do_opt<=0:
+        raise ValueError('--common-span needs --optimize')
+
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f, smooth_ratio) for f in json_files]
+        # with --common-span, the first pass only optimizes the spans (no output), so that no file is written with its
+        # own span if any of the files fails
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f, smooth_ratio, not common_span) for f in json_files]
         spans = [float(s) for s in p.starmap(smooth_shape_single, args)]
-        if common_span and do_opt>0:
+        if common_span:
             # same span for all files (e.g. the signal and control regions): smooth again with the largest optimized span
             span_common = max(spans)
             common.logger.info(f'Common span {span_common} (optimized: {dict(zip(json_files, spans))})')
@@ -771,7 +776,7 @@ def smooth_ratio_to_central(hist, raw_central, central_smooth, span):
     return out
 
 
-def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file, smooth_ratio=False):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file, smooth_ratio=False, write=True):
     # GCV optimization of the span (--optimize) for a histogram: returns the span and the scan's metadata
     def optimize_span(hist, log=False):
         spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
@@ -940,7 +945,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         outfile = outdir+'/'+osp.basename(json_file).replace(".json","_smooth.json")
     elif save:
         outfile = outdir+'/'+osp.basename(json_file).replace(".json","_smooth_{}.json".format(var))
-    if save_all or save:
+    if write and (save_all or save):
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
     return span_val
