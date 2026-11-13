@@ -102,10 +102,12 @@ def build_histogram(args=None):
         year = common.pull_arg('--year', type=str, default=None, help='year (overrides metadata)').year
         fullyear = common.pull_arg('--fullyear', action="store_true", help='treat 2018 as one year instead of splitting into pre and post').fullyear
         skimfile = common.pull_arg('skimfile', type=str).skimfile
+        outdir = common.pull_arg('--outdir', type=str, default=None, help='output directory (default: hists_<today>)').outdir
         change_bin_width(hist_var)
     else:
-        # Use passed input
-        selection, hist_var, lumi, year, fullyear, skimfile = args
+        # Use passed input (output directory optional)
+        selection, hist_var, lumi, year, fullyear, skimfile = args[:6]
+        outdir = args[6] if len(args)>6 else None
 
     def get_variation(var):
         return skimfile.replace(".npz",f"_{var}.npz")
@@ -180,8 +182,8 @@ def build_histogram(args=None):
 
     # process 2018 samples twice as PRE and POST
     if year=="2018" and not fullyear:
-        outfiles1 = build_histogram((selection,hist_var,None,"2018PRE",False,skimfile))
-        outfiles2 = build_histogram((selection,hist_var,None,"2018POST",False,skimfile))
+        outfiles1 = build_histogram((selection,hist_var,None,"2018PRE",False,skimfile,outdir))
+        outfiles2 = build_histogram((selection,hist_var,None,"2018POST",False,skimfile,outdir))
         return outfiles1+outfiles2
 
     # extract options from selection
@@ -286,7 +288,9 @@ def build_histogram(args=None):
 
     # save cutflow after applying final selection & after doing any copying (to avoid duplication)
     hist_variants['central'].cutflow = cen_columns.cutflow.copy()
-    outdir = f'hists_{strftime("%Y%m%d")}'
+    # the date is taken once per call of build_all_histograms (--outdir), not per file: a run across midnight must not
+    # split its histograms over two directories
+    if outdir is None: outdir = f'hists_{strftime("%Y%m%d")}'
     os.makedirs(outdir, exist_ok=True)
     process = osp.basename(skimfile).replace(".npz","")
     if metadata["sample_type"]=="data":
@@ -308,12 +312,13 @@ def build_all_histograms():
     hist_var_list = common.pull_arg("--hist_var_list", type=str, nargs='*', default=['mt']).hist_var_list
     fullyear = common.pull_arg('--fullyear', action="store_true", help='treat 2018 as one year instead of splitting into pre and post').fullyear
     threads = common.pull_arg('--threads', type=int, default=None).threads
+    outdir = common.pull_arg('--outdir', type=str, default=f'hists_{strftime("%Y%m%d")}', help='output directory (default: hists_<today>)').outdir
     skimdir = common.pull_arg('skimdir', type=str).skimdir
 
     skims = expand_wildcards(skimdir)
     for hist_var in hist_var_list:
         change_bin_width(hist_var)
-        args = [(selection, hist_var, None, None, fullyear, skim) for skim in skims]
+        args = [(selection, hist_var, None, None, fullyear, skim, outdir) for skim in skims]
         if threads==0:
             for arg in args:
                 build_histogram(arg)
@@ -330,6 +335,7 @@ def merge_histograms():
     hist_var = common.pull_arg("--hist_var", type=str,default='mt').hist_var
     cat = common.pull_arg('--cat', type=str, required=True, choices=['sig','bkg','data']).cat
     years = common.pull_arg('--years', type=str, default=["2016","2017","2018PRE","2018POST"], nargs='*').years
+    outfile_arg = common.pull_arg('--outfile', type=str, default=None, help='output file (bkg, data; default: name from the selection and binning)').outfile
     if histdir[-1]!='/': histdir += '/'
 
     change_bin_width(hist_var)
@@ -337,8 +343,25 @@ def merge_histograms():
         files = []
         for year in years:
             for sample in samples:
-                files += expand_wildcards(histdir+f'{sample}*_sel-{selection}_year-{year}_{hist_var}.json')
+                files += sorted(expand_wildcards(histdir+f'{sample}*_sel-{selection}_year-{year}_{hist_var}.json'))
         return files
+
+    def file_process_year(file):
+        # <process>_sel-<selection>_year-<year>_<hist_var>.json (written by build_histogram)
+        m = re.match(rf'(.+?)_sel-.*_year-(.+?)_{hist_var}\.json$', osp.basename(file))
+        return m.group(1), m.group(2)
+
+    def check_complete(files):
+        # a missing histogram means a failed or unfinished build step: stop instead of merging a partial set
+        if len(files)==0:
+            raise FileNotFoundError(f'No {cat} histograms for selection {selection} in {histdir} (years {years})')
+        found = defaultdict(set)
+        for file in files:
+            proc, year = file_process_year(file)
+            found['all' if cat=='data' else proc].add(year)
+        missing = {proc: sorted(set(years)-found_years) for proc,found_years in found.items() if set(years)-found_years}
+        if missing:
+            raise FileNotFoundError(f'Missing {cat} histograms for selection {selection} in {histdir} (process: years): {missing}')
 
     def get_hists(file):
         with open(file,'r') as f:
@@ -362,7 +385,8 @@ def merge_histograms():
         else:
             outfile = f'{outdir}/{proc}_sel-{selection}_{hist_var}.json'
         hists = rebin_dict(hists, hist_var)
-        outfile = rebin_name(outfile, hist_var)
+        outfile = rebin_name(outfile, hist_var) if outfile_arg is None else outfile_arg
+        os.makedirs(osp.dirname(osp.abspath(outfile)), exist_ok=True)
         common.logger.info(f'Dumping merged histograms to {outfile}')
         with open(outfile, 'w') as f:
             json.dump(hists, f, cls=common.Encoder, indent=4)
@@ -379,6 +403,9 @@ def merge_histograms():
         "sig": ['SVJ'],
     }
     files = get_files(samples[cat],years)
+    check_complete(files)
+    if outfile_arg is not None and cat=='sig':
+        raise ValueError('--outfile: only for --cat bkg or data (one output file)')
     default = 'central'
     if cat=="data":
         # just add them all up
@@ -394,13 +421,10 @@ def merge_histograms():
         # just add years
         signals = defaultdict(list)
         for file in files:
-            signals['_'.join(file.split('/')[1].split('_')[:-2])].append(file)
+            signals['_'.join(osp.basename(file).split('_')[:-2])].append(file)
         for signal,sigfiles in signals.items():
             common.logger.info(f"Running merge for {signal}")
-            for year in years:
-              if len([f for f in sigfiles if year in f]) == 0:
-                  common.logger.warning(f"Missing files for signal/year: {signal}/{year}")
-            sighists = {year: get_hists([f for f in sigfiles if year in f][0]) for year in years}
+            sighists = {year: get_hists([f for f in sigfiles if file_process_year(f)[1]==year][0]) for year in years}
             keys = list(sorted(set([key for y,h in sighists.items() for key in h])))
             hist_variants = {}
             for key in keys:
@@ -426,10 +450,16 @@ def merge_histograms():
             hist_variants[b] = None
         for file in files:
             tmp = get_hists(file)[default]
-            bkg = next((b for b in samples["bkg"] if b in file)).lower()
+            bkg = next((b for b in samples["bkg"] if osp.basename(file).startswith(b))).lower()
             hist_variants[bkg+'_individual'].append(tmp) # Save individual histogram
             hist_variants[bkg] = add_hists(hist_variants[bkg],tmp) # Add up per background category
             hist_variants[cat] = add_hists(hist_variants[cat],tmp) # Add up all
+        # the sums keep the metadata of their first sample: remove the per-sample entries
+        for b in samples["bkg"]+[cat]:
+            if hist_variants[b.lower()] is None: continue
+            hist_variants[b.lower()] = hist_variants[b.lower()].copy() # a single-sample sum is that sample's object
+            for key in ['src','ptbin','htbin'] + (['bkg_type'] if b==cat else []):
+                hist_variants[b.lower()].metadata.pop(key, None)
         assign_metadata(hist_variants[cat])
         write(hist_variants,cat)
 
@@ -735,10 +765,15 @@ def smooth_shapes():
              "smoothing each variation separately; the ratio's span is chosen as the central's (--optimize: GCV)").smooth_ratio
     json_files = common.pull_arg('jsonfiles', nargs='+', type=str).jsonfiles
 
+    if common_span and do_opt<=0:
+        raise ValueError('--common-span needs --optimize')
+
     with common.mp_pool() as p:
-        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f, smooth_ratio) for f in json_files]
+        # with --common-span, the first pass only optimizes the spans (no output), so that no file is written with its
+        # own span if any of the files fails
+        args = [(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save, mtmin, mtmax, norm, log, None, f, smooth_ratio, not common_span) for f in json_files]
         spans = [float(s) for s in p.starmap(smooth_shape_single, args)]
-        if common_span and do_opt>0:
+        if common_span:
             # same span for all files (e.g. the signal and control regions): smooth again with the largest optimized span
             span_common = max(spans)
             common.logger.info(f'Common span {span_common} (optimized: {dict(zip(json_files, spans))})')
@@ -771,7 +806,7 @@ def smooth_ratio_to_central(hist, raw_central, central_smooth, span):
     return out
 
 
-def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file, smooth_ratio=False):
+def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run, gcv_tol, do_opt, default, target, debug, var, save , mtmin, mtmax, norm, log, span_opt, json_file, smooth_ratio=False, write=True):
     # GCV optimization of the span (--optimize) for a histogram: returns the span and the scan's metadata
     def optimize_span(hist, log=False):
         spans = np.linspace(span_min,span_max,do_opt,endpoint=False) # skip 1
@@ -940,7 +975,7 @@ def smooth_shape_single(span_val, span_min, span_max, simple, leak_tol, min_run,
         outfile = outdir+'/'+osp.basename(json_file).replace(".json","_smooth.json")
     elif save:
         outfile = outdir+'/'+osp.basename(json_file).replace(".json","_smooth_{}.json".format(var))
-    if save_all or save:
+    if write and (save_all or save):
         with open(outfile, 'w') as f:
             json.dump(mths_new, f, indent=4, cls=common.Encoder)
     return span_val

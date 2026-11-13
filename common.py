@@ -527,14 +527,22 @@ def get_single_event_weight(weights):
 def add_cutflows(*objs):
     # add cutflows if present, accounting for weights
     keys = [list(obj.cutflow.keys()) if hasattr(obj,'cutflow') else [] for obj in objs]
-    if keys and all(keys) and all(k == keys[0] for k in keys):
-        weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
-        return OrderedDict((k, sum(obj.cutflow[k]*weight for obj,weight in zip(objs,weights))) for k in keys[0])
-    else:
-        if keys and all(keys):
-            keylist = '\n'.join(f'  {k}' for k in keys)
-            logger.warning(f'Unable to add cutflows with different keys:\n{keylist}')
+    if not (keys and all(keys)):
         return OrderedDict()
+    # the cut lists can differ by cuts applied to some of the objects only (e.g. hem_veto, 2018POST only): add up the
+    # union of the cuts, in order, where an object without a cut counts the events after its previous cut
+    union = []
+    for klist in keys:
+        for i,k in enumerate(klist):
+            if k in union: continue
+            before = [union.index(p) for p in klist[:i] if p in union]
+            union.insert(max(before)+1 if before else 0, k)
+    def count(obj, k):
+        i = union.index(k)
+        while i>=0 and union[i] not in obj.cutflow: i -= 1
+        return obj.cutflow[union[i]] if i>=0 else next(iter(obj.cutflow.values()))
+    weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
+    return OrderedDict((k, sum(count(obj,k)*weight for obj,weight in zip(objs,weights))) for k in union)
 
 class Histogram:
     """
@@ -1177,6 +1185,8 @@ def calculate_varDDT(mt, rt_sel, var, cut_val, ddt_name, smear=0.0):
 
     if str(cut_val) not in var_dict:
         raise KeyError(f"The key {cut_val} does not exist in the dictionary.")
+    if not isinstance(var_dict[str(cut_val)], dict) or "MT_edges" not in var_dict[str(cut_val)]:
+        raise ValueError(f"{ddt_name} is not an m_T-binned DDT map (no MT_edges for {cut_val}), e.g. an old 3D map")
 
     # Get the bin edges
     MT_edges = np.array(var_dict[str(cut_val)]["MT_edges"])
@@ -1272,7 +1282,11 @@ def apply_rt_signalregion_ddt(cols, rt_ddt_map=RT_DDT_FILE, xrootd_url=RT_DDT_PA
 
 
 DDT_PATH_CUTBASED = 'root://cmseos.fnal.gov//store/user/lpcdarkqcd/boosted/cutbased_ddt/'
+# old 3D map, not readable by calculate_varDDT (m_T-binned maps only): the selections without the RT DDT
+# (cutbased_ddt, anticutbased_ddt, antiloosecutbased_ddt) need an m_T-binned map without RT first
 DDT_FILE_CUTBASED = 'models/cutbased_ddt_map_ANv6_3d.json'
+# the map of the RT DDT selections: the signal region and both control regions take the tagger DDT value from
+# rtcutbased_ddt_val with this map, so that they use the same thresholds
 DDT_FILE_CUTBASED_RT_DDT = './models/cutbased_ddt_map_withRT_ANv6_mtbin.json'
 
 def cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url):
@@ -1304,7 +1318,7 @@ def apply_cutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xroo
 
 def apply_rtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
     cols = apply_rt_signalregion_ddt(cols)
-    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val > 0.0)
     cols.cutflow['cutbased_rt_ddt'] = len(cols)
     return cols
@@ -1335,7 +1349,7 @@ def apply_anticutbased(cols, cut_val=0.09):
 
 def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion_ddt(cols)
-    ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_ddt'] = len(cols)
     return cols
@@ -1355,6 +1369,11 @@ def _calc_rtcutbased_ddt_val(cols, lumi, cut_val, rt_ddt_file, rt_cut_val, ddt_m
     ddt_val = calculate_varDDT(mT, rt_mask, ecfm2b1, cut_val, ddt_map_file, smear=RT_DDT_SMEAR)
     return ddt_val
 
+def rtcutbased_ddt_val(cols, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
+    # cut-based tagger DDT value of the RT DDT selections (double DDT), the same for the signal region (> 0 after the
+    # RT DDT), the anti region (< 0 after the RT DDT) and the antiloose region (< 0, no RT selection)
+    return _calc_rtcutbased_ddt_val(cols, None, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
+
 
 def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
     ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, None, SELECTION_RT_SIGNAL_REGION, ddt_map_file, xrootd_url)
@@ -1363,7 +1382,7 @@ def apply_antiloosecutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBA
     return cols
 
 def apply_antiloosertcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED):
-    ddt_val = _calc_rtcutbased_ddt_val(cols, lumi, cut_val, RT_DDT_FILE, SELECTION_RTDDT_SIGNAL_REGION, ddt_map_file, xrootd_url)
+    ddt_val = rtcutbased_ddt_val(cols, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
     cols.cutflow['anticutbased_rtddt'] = len(cols)
     return cols
@@ -1427,7 +1446,7 @@ def apply_bdtbased(cols,wp,lumi,anti=False,model_file=bdt_model_file,ddt_map_fil
         cols.cutflow['ddt(bdt)'] = len(cols)
     return cols
 
-def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_PATH_BDTBASED,xrootd_url=DDT_PATH_BDTBASED):
+def apply_antiloosebdt(cols,wp,lumi,rt_ddt_file=None,model_file=bdt_model_file,ddt_map_file=DDT_FILE_BDTBASED_RT_DDT,xrootd_url=DDT_PATH_BDTBASED):
     # Running the BDT calculation. If the RT_DDT files is provided, the double DDT method will be used
     check_if_model_exists(ddt_map_file, xrootd_url)
     check_if_model_exists(model_file, xrootd_url)
