@@ -1478,6 +1478,14 @@ def get_model_sf(cols, var="cen", sf_file=SF_FILE, xrootd_url=SF_PATH):
         return sf[bin_idx] * (1-unc[bin_idx])
 
 
+def check_all_files():
+    # these are all the files we are currently using, not all the possible files
+    check_if_model_exists(RT_DDT_FILE, RT_DDT_PATH)
+    check_if_model_exists(DDT_FILE_CUTBASED_RT_DDT, DDT_PATH_CUTBASED)
+    check_if_model_exists(DDT_FILE_BDTBASED_RT_DDT, DDT_PATH_BDTBASED)
+    check_if_model_exists(bdt_model_file, DDT_PATH_BDTBASED)
+    check_if_model_exists(SF_FILE, SF_PATH)
+
 class InvalidSelectionException(Exception):
     def __init__(self, msg='Unknown selection {}; choices are "preselection", "cutbased", or "bdt=X.XXX".', sel="", *args, **kwargs):
         msg = msg.format(sel)

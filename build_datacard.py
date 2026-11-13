@@ -318,6 +318,8 @@ def build_all_histograms():
             for arg in args:
                 build_histogram(arg)
         else:
+            # check files first to avoid races
+            common.check_all_files()
             with common.mp_pool(max_thread=threads) as p:
                 p.map(build_histogram, args)
 
