@@ -208,7 +208,7 @@ Histograms are then merged across all data-taking years and smoothed in some cas
 The commands to perform all steps (histograms, merging, smoothing) for all categories (data, background, signal) are executed by `build_all.sh`.
 The desired selection(s) can be specified using the `--sels` argument (and are internally expanded to include the anti-tag control regions):
 ```bash
-./build_all.sh --sels "cutbased_ddt=0.12 bdt=0.75"
+./build_all.sh --sels "rtcutbased_ddt=0.1 rtbdt=0.85"
 ```
 
 These merged, smoothed json files are the inputs to the limit setting. The signal, background, and (optionally) data are supplied separately.

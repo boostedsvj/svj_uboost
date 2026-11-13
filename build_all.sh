@@ -30,7 +30,7 @@ done
 actual_sels=()
 for sel in ${sels[@]}; do
     # define all regions for this selection
-    actual_sels+=(${sel} anti${sel} antiloose${sel})
+    actual_sels+=(${sel} antiloose${sel})
 done
 
 set -x
@@ -56,5 +56,5 @@ done
 
 # BKG smoothing: all regions of each selection together (same span with --common_span)
 for sel in ${sels[@]}; do
-    ./smooth_bkg.sh --hists_date ${hists_date} --sels "${sel} anti${sel} antiloose${sel}" --mt_reg "${mt_reg}" ${bkg_smooth}
+    ./smooth_bkg.sh --hists_date ${hists_date} --sels "${sel} antiloose${sel}" --mt_reg "${mt_reg}" ${bkg_smooth}
 done
