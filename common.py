@@ -1333,7 +1333,7 @@ def apply_anticutbased(cols, cut_val=0.09):
     cols.cutflow['anticutbased'] = len(cols)
     return cols
 
-def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED, xrootd_url=DDT_PATH_CUTBASED) :
+def apply_antirtcutbased_ddt(cols, lumi, cut_val, ddt_map_file=DDT_FILE_CUTBASED_RT_DDT, xrootd_url=DDT_PATH_CUTBASED) :
     cols = apply_rt_signalregion_ddt(cols)
     ddt_val = cutbased_ddt(cols, lumi, cut_val, ddt_map_file, xrootd_url)
     cols = cols.select(ddt_val < 0.0) # mask for the selection
