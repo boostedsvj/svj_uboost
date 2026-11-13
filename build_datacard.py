@@ -343,8 +343,25 @@ def merge_histograms():
         files = []
         for year in years:
             for sample in samples:
-                files += expand_wildcards(histdir+f'{sample}*_sel-{selection}_year-{year}_{hist_var}.json')
+                files += sorted(expand_wildcards(histdir+f'{sample}*_sel-{selection}_year-{year}_{hist_var}.json'))
         return files
+
+    def file_process_year(file):
+        # <process>_sel-<selection>_year-<year>_<hist_var>.json (written by build_histogram)
+        m = re.match(rf'(.+?)_sel-.*_year-(.+?)_{hist_var}\.json$', osp.basename(file))
+        return m.group(1), m.group(2)
+
+    def check_complete(files):
+        # a missing histogram means a failed or unfinished build step: stop instead of merging a partial set
+        if len(files)==0:
+            raise FileNotFoundError(f'No {cat} histograms for selection {selection} in {histdir} (years {years})')
+        found = defaultdict(set)
+        for file in files:
+            proc, year = file_process_year(file)
+            found['all' if cat=='data' else proc].add(year)
+        missing = {proc: sorted(set(years)-found_years) for proc,found_years in found.items() if set(years)-found_years}
+        if missing:
+            raise FileNotFoundError(f'Missing {cat} histograms for selection {selection} in {histdir} (process: years): {missing}')
 
     def get_hists(file):
         with open(file,'r') as f:
@@ -386,6 +403,9 @@ def merge_histograms():
         "sig": ['SVJ'],
     }
     files = get_files(samples[cat],years)
+    check_complete(files)
+    if outfile_arg is not None and cat=='sig':
+        raise ValueError('--outfile: only for --cat bkg or data (one output file)')
     default = 'central'
     if cat=="data":
         # just add them all up
@@ -401,13 +421,10 @@ def merge_histograms():
         # just add years
         signals = defaultdict(list)
         for file in files:
-            signals['_'.join(file.split('/')[1].split('_')[:-2])].append(file)
+            signals['_'.join(osp.basename(file).split('_')[:-2])].append(file)
         for signal,sigfiles in signals.items():
             common.logger.info(f"Running merge for {signal}")
-            for year in years:
-              if len([f for f in sigfiles if year in f]) == 0:
-                  common.logger.warning(f"Missing files for signal/year: {signal}/{year}")
-            sighists = {year: get_hists([f for f in sigfiles if year in f][0]) for year in years}
+            sighists = {year: get_hists([f for f in sigfiles if file_process_year(f)[1]==year][0]) for year in years}
             keys = list(sorted(set([key for y,h in sighists.items() for key in h])))
             hist_variants = {}
             for key in keys:
@@ -433,10 +450,16 @@ def merge_histograms():
             hist_variants[b] = None
         for file in files:
             tmp = get_hists(file)[default]
-            bkg = next((b for b in samples["bkg"] if b in file)).lower()
+            bkg = next((b for b in samples["bkg"] if osp.basename(file).startswith(b))).lower()
             hist_variants[bkg+'_individual'].append(tmp) # Save individual histogram
             hist_variants[bkg] = add_hists(hist_variants[bkg],tmp) # Add up per background category
             hist_variants[cat] = add_hists(hist_variants[cat],tmp) # Add up all
+        # the sums keep the metadata of their first sample: remove the per-sample entries
+        for b in samples["bkg"]+[cat]:
+            if hist_variants[b.lower()] is None: continue
+            hist_variants[b.lower()] = hist_variants[b.lower()].copy() # a single-sample sum is that sample's object
+            for key in ['src','ptbin','htbin'] + (['bkg_type'] if b==cat else []):
+                hist_variants[b.lower()].metadata.pop(key, None)
         assign_metadata(hist_variants[cat])
         write(hist_variants,cat)
 

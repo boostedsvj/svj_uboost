@@ -527,14 +527,22 @@ def get_single_event_weight(weights):
 def add_cutflows(*objs):
     # add cutflows if present, accounting for weights
     keys = [list(obj.cutflow.keys()) if hasattr(obj,'cutflow') else [] for obj in objs]
-    if keys and all(keys) and all(k == keys[0] for k in keys):
-        weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
-        return OrderedDict((k, sum(obj.cutflow[k]*weight for obj,weight in zip(objs,weights))) for k in keys[0])
-    else:
-        if keys and all(keys):
-            keylist = '\n'.join(f'  {k}' for k in keys)
-            logger.warning(f'Unable to add cutflows with different keys:\n{keylist}')
+    if not (keys and all(keys)):
         return OrderedDict()
+    # the cut lists can differ by cuts applied to some of the objects only (e.g. hem_veto, 2018POST only): add up the
+    # union of the cuts, in order, where an object without a cut counts the events after its previous cut
+    union = []
+    for klist in keys:
+        for i,k in enumerate(klist):
+            if k in union: continue
+            before = [union.index(p) for p in klist[:i] if p in union]
+            union.insert(max(before)+1 if before else 0, k)
+    def count(obj, k):
+        i = union.index(k)
+        while i>=0 and union[i] not in obj.cutflow: i -= 1
+        return obj.cutflow[union[i]] if i>=0 else next(iter(obj.cutflow.values()))
+    weights = [get_single_event_weight(get_event_weight(obj, noPU=True)) for obj in objs]
+    return OrderedDict((k, sum(count(obj,k)*weight for obj,weight in zip(objs,weights))) for k in union)
 
 class Histogram:
     """
