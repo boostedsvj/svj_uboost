@@ -118,7 +118,7 @@ def plot_results(results, ecf_cuts, plot_prefix):
         ax_upper.step(plot_bins[:-1], mc_cr/np.sum(mc_cr), label="Background MC ($1.10<R_T$)", where='pre')
         ax_upper.errorbar(plot_bins[:-1], data/np.sum(data), yerr=data*rel_unc(data,data)/np.sum(data),  label="Data ($1.05<R_T<1.10$)", marker='o', color='k', ls='none')
         ax_upper.legend(loc='upper right')
-        ax_upper.set_ylim(bottom=1e-3, top=0.5)
+        ax_upper.set_ylim(bottom=3e-5, top=1)
         ax_upper.set_yscale('log')
         ax_upper.set_ylabel("Normalized number of events")
         common.put_on_cmslabel(ax=ax_upper, text="Preliminary", year=float(common.lumis["RUN2"]))
