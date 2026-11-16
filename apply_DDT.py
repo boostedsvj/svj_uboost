@@ -271,12 +271,13 @@ def main():
         def plot_single(var_map_array, cut_val, MT_edges, plt_name):
             fig, ax = simple_fig()
             centers = (MT_edges[1:] + MT_edges[:-1])/2
-            ax.plot(centers, var_map_array[:,1], label="nominal")
+            ax.plot(centers, var_map_array[:,1], label="" if ana_type == 'RT' else "$R_T$-pass")
             if ana_type != 'RT':
-                ax.plot(centers, var_map_array[:,0], label="anti-RT")
+                ax.plot(centers, var_map_array[:,0], label="$R_T$-fail")
             ax.set_xlabel(r'$m_{\mathrm{T}}$ [GeV]')
             ax.set_ylabel('DDT map value')
-            ax.axhline(float(cut_val))
+            ax.axhline(float(cut_val), color="gray")
+            ax.legend()
             save_plot(plt, f"{plt_name}{psuff}")
             plt.close()
 
