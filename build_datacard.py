@@ -220,11 +220,12 @@ def build_histogram(args=None):
         scale_weight = cen_columns.to_numpy(['scaleweights'])
         scale_weight = scale_weight[ak.num(scale_weight,axis=1)>np.max(good_scales)]
         scale_weight = scale_weight[:, good_scales]
-        if len(scale_weight):
-            weight_up = w * np.max(scale_weight, axis=-1) * cen_columns.metadata['scale_factor_up']
-            weight_down = w * np.min(scale_weight, axis=-1) * cen_columns.metadata['scale_factor_down']
-            hist_variants['scale_up'] = VarHistogram(cen_columns, weight_up)
-            hist_variants['scale_down'] = VarHistogram(cen_columns, weight_down)
+        if len(scale_weight)==0:
+            scale_weight = np.ones(len(good_scales))
+        weight_up = w * np.max(scale_weight, axis=-1) * cen_columns.metadata['scale_factor_up']
+        weight_down = w * np.min(scale_weight, axis=-1) * cen_columns.metadata['scale_factor_down']
+        hist_variants['scale_up'] = VarHistogram(cen_columns, weight_up)
+        hist_variants['scale_down'] = VarHistogram(cen_columns, weight_down)
 
         # JEC/JER/JES
         def mth_jerjecjes(tag):
